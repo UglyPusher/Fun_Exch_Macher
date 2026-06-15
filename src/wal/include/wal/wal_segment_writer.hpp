@@ -39,6 +39,9 @@ namespace wal
             std::span<const std::byte> payload,
             SequenceNumber sequence) const;
 
+        [[nodiscard]] WalError prepare_existing_segment(SequenceNumber first_sequence);
+        [[nodiscard]] WalError read_existing_segment_header(WalSegmentHeader& header) const;
+
         void write_segment_header();
 
     private:
@@ -49,6 +52,7 @@ namespace wal
         EpochId epoch_ = 0;
         SequenceNumber next_sequence_ = 1;
         WalPosition last_position_ {};
+        WalError open_error_ = WalError::None;
 
         std::vector<std::byte> write_buffer_;
     };

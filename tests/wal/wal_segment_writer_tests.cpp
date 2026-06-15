@@ -1,44 +1,127 @@
+#include "wal/wal_segment_reader.hpp"
 #include "wal/wal_segment_writer.hpp"
 #include "wal/wal_file.hpp"
 
 #include <array>
 #include <cstddef>
 #include <filesystem>
+#include <fstream>
 
 namespace
 {
-    std::filesystem::path test_path()
+    std::filesystem::path test_path(const char* name)
     {
-        return std::filesystem::current_path() / "matching_engine_wal_writer_test.wal";
+        return std::filesystem::current_path() / name;
+    }
+
+    void append_trailing_garbage(const std::filesystem::path& path)
+    {
+        std::ofstream file{path, std::ios::binary | std::ios::app};
+        const std::array bytes{std::byte{0xAA}, std::byte{0xBB}};
+        file.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    }
+
+    void overwrite_payload_byte(const std::filesystem::path& path)
+    {
+        std::fstream file{path, std::ios::binary | std::ios::in | std::ios::out};
+        file.seekp(static_cast<std::streamoff>(sizeof(wal::WalSegmentHeader) + sizeof(wal::WalRecordHeader)));
+        const auto value = std::byte{0x7F};
+        file.write(reinterpret_cast<const char*>(&value), 1);
     }
 }
 
 int main()
 {
-    const auto path = test_path();
+    const auto path = test_path("matching_engine_wal_writer_test.wal");
     std::filesystem::remove(path);
 
-    wal::WalSegmentWriter writer{path, 7, 3, 10};
     const std::array payload{std::byte{1}, std::byte{2}, std::byte{3}};
 
-    const auto first = writer.append(200, payload);
-    if (first.status != wal::WalAppendStatus::Appended || first.position.sequence != 10) {
-        return 1;
-    }
+    {
+        wal::WalSegmentWriter writer{path, 7, 3, 10};
+        const auto first = writer.append(200, payload);
+        if (first.status != wal::WalAppendStatus::Appended || first.position.sequence != 10) {
+            return 1;
+        }
 
-    const auto second = writer.append(200, payload);
-    if (second.status != wal::WalAppendStatus::Appended || second.position.sequence != 11) {
-        return 2;
-    }
+        const auto second = writer.append(200, payload);
+        if (second.status != wal::WalAppendStatus::Appended || second.position.sequence != 11) {
+            return 2;
+        }
 
-    if (writer.commit().status != wal::WalCommitStatus::Committed) {
-        return 3;
+        if (writer.commit().status != wal::WalCommitStatus::Committed) {
+            return 3;
+        }
     }
 
     if (!wal::WalFile::exists(path) || wal::WalFile::size(path) <= sizeof(wal::WalSegmentHeader)) {
         return 4;
     }
 
+    {
+        wal::WalSegmentWriter reopened{path, 7, 3, 10};
+        const auto result = reopened.append(200, payload);
+        if (result.status != wal::WalAppendStatus::Appended || result.position.sequence != 12) {
+            return 5;
+        }
+    }
+
+    append_trailing_garbage(path);
+    {
+        wal::WalSegmentWriter recovered{path, 7, 3, 10};
+        const auto result = recovered.append(200, payload);
+        if (result.status != wal::WalAppendStatus::Appended || result.position.sequence != 13) {
+            return 6;
+        }
+    }
+
+    {
+        wal::WalSegmentReader reader{path};
+        wal::WalRecordView record;
+        for (int expected = 10; expected <= 13; ++expected) {
+            const auto result = reader.read_next(record);
+            if (result.status != wal::WalReadStatus::RecordRead || record.header.sequence != static_cast<wal::SequenceNumber>(expected)) {
+                return 7;
+            }
+        }
+        if (reader.read_next(record).status != wal::WalReadStatus::EndOfLog) {
+            return 8;
+        }
+    }
+
+    const auto corrupted_path = test_path("matching_engine_wal_writer_corrupted_test.wal");
+    std::filesystem::remove(corrupted_path);
+    {
+        wal::WalSegmentWriter writer{corrupted_path, 1, 1, 1};
+        writer.append(200, payload);
+        writer.commit();
+    }
+    overwrite_payload_byte(corrupted_path);
+    {
+        wal::WalSegmentWriter writer{corrupted_path, 1, 1, 1};
+        const auto result = writer.append(200, payload);
+        if (result.status != wal::WalAppendStatus::Failed || result.error != wal::WalError::CorruptedMiddleRecord) {
+            return 9;
+        }
+    }
+
+    const auto wrong_stream_path = test_path("matching_engine_wal_writer_wrong_stream_test.wal");
+    std::filesystem::remove(wrong_stream_path);
+    {
+        wal::WalSegmentWriter writer{wrong_stream_path, 1, 1, 1};
+        writer.append(200, payload);
+        writer.commit();
+    }
+    {
+        wal::WalSegmentWriter writer{wrong_stream_path, 2, 1, 1};
+        const auto result = writer.append(200, payload);
+        if (result.status != wal::WalAppendStatus::Failed || result.error != wal::WalError::InvalidSegmentHeader) {
+            return 10;
+        }
+    }
+
     std::filesystem::remove(path);
+    std::filesystem::remove(corrupted_path);
+    std::filesystem::remove(wrong_stream_path);
     return 0;
 }

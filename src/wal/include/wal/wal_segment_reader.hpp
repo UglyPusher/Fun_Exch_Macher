@@ -29,6 +29,7 @@ namespace wal
 
         WalSegmentHeader segment_header_ {};
         WalPosition last_position_ {};
+        WalReadResult open_result_ {.status = WalReadStatus::Failed, .error = WalError::CannotReadFile};
 
         std::vector<std::byte> payload_buffer_;
     };

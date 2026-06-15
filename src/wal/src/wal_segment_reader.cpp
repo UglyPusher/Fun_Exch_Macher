@@ -7,27 +7,21 @@
 
 namespace wal
 {
-    namespace
-    {
-        std::uint32_t header_crc(WalRecordHeader header) noexcept
-        {
-            header.header_crc = 0;
-            const auto* data = reinterpret_cast<const std::byte*>(&header);
-            return calculate_crc32({data, sizeof(header)});
-        }
-    }
-
     WalSegmentReader::WalSegmentReader(std::filesystem::path file_path)
         : file_path_(std::move(file_path))
     {
         file_.open(file_path_, std::ios::binary);
-        if (file_) {
-            (void)read_segment_header();
-        }
+        open_result_ = file_
+            ? read_segment_header()
+            : WalReadResult{.status = WalReadStatus::Failed, .error = WalError::CannotOpenFile, .position = last_position_};
     }
 
     WalReadResult WalSegmentReader::read_next(WalRecordView& out)
     {
+        if (open_result_.status != WalReadStatus::RecordRead) {
+            return open_result_;
+        }
+
         if (!file_) {
             return {.status = WalReadStatus::Failed, .error = WalError::CannotReadFile, .position = last_position_};
         }
@@ -72,6 +66,10 @@ namespace wal
             return {.status = WalReadStatus::Failed, .error = WalError::InvalidSegmentHeader, .position = last_position_};
         }
 
+        if (segment_header_.header_crc != calculate_segment_header_crc(segment_header_)) {
+            return {.status = WalReadStatus::Failed, .error = WalError::HeaderChecksumMismatch, .position = last_position_};
+        }
+
         return {.status = WalReadStatus::RecordRead, .error = WalError::None, .position = last_position_};
     }
 
@@ -91,7 +89,7 @@ namespace wal
             return {.status = WalReadStatus::Failed, .error = WalError::InvalidRecordHeader, .position = last_position_};
         }
 
-        if (header.header_crc != header_crc(header)) {
+        if (header.header_crc != calculate_record_header_crc(header)) {
             return {.status = WalReadStatus::Failed, .error = WalError::HeaderChecksumMismatch, .position = last_position_};
         }
 

@@ -3,23 +3,14 @@
 #include "wal/wal_alignment.hpp"
 #include "wal/wal_checksum.hpp"
 #include "wal/wal_file.hpp"
+#include "wal/wal_segment_scanner.hpp"
 
 #include <array>
-#include <cstring>
+#include <fstream>
 #include <utility>
 
 namespace wal
 {
-    namespace
-    {
-        std::uint32_t header_crc(WalRecordHeader header) noexcept
-        {
-            header.header_crc = 0;
-            const auto* data = reinterpret_cast<const std::byte*>(&header);
-            return calculate_crc32({data, sizeof(header)});
-        }
-    }
-
     WalSegmentWriter::WalSegmentWriter(
         std::filesystem::path file_path,
         StreamId stream_id,
@@ -33,9 +24,19 @@ namespace wal
         WalFile::ensure_parent_directory_exists(file_path_);
         const auto should_write_header = !WalFile::exists(file_path_) || WalFile::size(file_path_) == 0;
 
+        if (!should_write_header) {
+            open_error_ = prepare_existing_segment(first_sequence);
+            if (open_error_ != WalError::None) {
+                return;
+            }
+        }
+
         file_.open(file_path_, std::ios::binary | std::ios::app);
         if (should_write_header) {
             write_segment_header();
+            if (!file_) {
+                open_error_ = WalError::CannotWriteFile;
+            }
         }
     }
 
@@ -50,6 +51,10 @@ namespace wal
         RecordType record_type,
         std::span<const std::byte> payload)
     {
+        if (open_error_ != WalError::None) {
+            return {.status = WalAppendStatus::Failed, .error = open_error_, .position = last_position_};
+        }
+
         if (!file_) {
             return {.status = WalAppendStatus::Failed, .error = WalError::CannotWriteFile, .position = last_position_};
         }
@@ -59,6 +64,10 @@ namespace wal
 
     WalCommitResult WalSegmentWriter::commit()
     {
+        if (open_error_ != WalError::None) {
+            return {.status = WalCommitStatus::Failed, .error = open_error_, .committed_up_to = last_position_};
+        }
+
         file_.flush();
 
         if (!file_) {
@@ -113,8 +122,63 @@ namespace wal
             .payload_length = static_cast<std::uint32_t>(payload.size()),
             .payload_crc = calculate_crc32(payload)
         };
-        header.header_crc = header_crc(header);
+        header.header_crc = calculate_record_header_crc(header);
         return header;
+    }
+
+    WalError WalSegmentWriter::prepare_existing_segment(SequenceNumber first_sequence)
+    {
+        WalSegmentHeader segment_header;
+        const auto header_error = read_existing_segment_header(segment_header);
+        if (header_error != WalError::None) {
+            return header_error;
+        }
+
+        if (segment_header.stream_id != stream_id_
+            || segment_header.epoch != epoch_
+            || segment_header.first_sequence != first_sequence) {
+            return WalError::InvalidSegmentHeader;
+        }
+
+        WalSegmentScanner scanner;
+        auto scan_result = scanner.scan(file_path_);
+        if (!scan_result.ok && scan_result.error != WalError::IncompleteTrailingRecord) {
+            return scan_result.error;
+        }
+
+        if (scan_result.error == WalError::IncompleteTrailingRecord) {
+            WalFile::truncate(file_path_, scan_result.last_valid_offset);
+        }
+
+        last_position_ = scan_result.last_valid_position;
+        next_sequence_ = last_position_.is_valid()
+            ? last_position_.sequence + 1
+            : segment_header.first_sequence;
+
+        return WalError::None;
+    }
+
+    WalError WalSegmentWriter::read_existing_segment_header(WalSegmentHeader& header) const
+    {
+        std::ifstream file{file_path_, std::ios::binary};
+        if (!file) {
+            return WalError::CannotOpenFile;
+        }
+
+        file.read(reinterpret_cast<char*>(&header), sizeof(header));
+        if (file.gcount() != static_cast<std::streamsize>(sizeof(header))) {
+            return WalError::InvalidSegmentHeader;
+        }
+
+        if (!header.has_valid_static_fields()) {
+            return WalError::InvalidSegmentHeader;
+        }
+
+        if (header.header_crc != calculate_segment_header_crc(header)) {
+            return WalError::HeaderChecksumMismatch;
+        }
+
+        return WalError::None;
     }
 
     void WalSegmentWriter::write_segment_header()
@@ -124,6 +188,7 @@ namespace wal
             .epoch = epoch_,
             .first_sequence = next_sequence_
         };
+        header.header_crc = calculate_segment_header_crc(header);
         file_.write(reinterpret_cast<const char*>(&header), sizeof(header));
     }
 }

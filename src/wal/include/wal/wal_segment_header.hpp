@@ -24,4 +24,7 @@ namespace wal
     };
 
     static_assert(std::is_trivially_copyable_v<WalSegmentHeader>);
+    static_assert(std::is_standard_layout_v<WalSegmentHeader>);
+
+    [[nodiscard]] std::uint32_t calculate_segment_header_crc(WalSegmentHeader header) noexcept;
 }

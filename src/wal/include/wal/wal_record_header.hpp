@@ -29,4 +29,7 @@ namespace wal
     };
 
     static_assert(std::is_trivially_copyable_v<WalRecordHeader>);
+    static_assert(std::is_standard_layout_v<WalRecordHeader>);
+
+    [[nodiscard]] std::uint32_t calculate_record_header_crc(WalRecordHeader header) noexcept;
 }

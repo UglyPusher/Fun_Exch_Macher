@@ -9,16 +9,6 @@
 
 namespace wal
 {
-    namespace
-    {
-        std::uint32_t header_crc(WalRecordHeader header) noexcept
-        {
-            header.header_crc = 0;
-            const auto* data = reinterpret_cast<const std::byte*>(&header);
-            return calculate_crc32({data, sizeof(header)});
-        }
-    }
-
     WalSegmentScanResult WalSegmentScanner::scan(const std::filesystem::path& file_path)
     {
         std::ifstream file{file_path, std::ios::binary};
@@ -30,6 +20,10 @@ namespace wal
         file.read(reinterpret_cast<char*>(&segment_header), sizeof(segment_header));
         if (file.gcount() != static_cast<std::streamsize>(sizeof(segment_header)) || !segment_header.has_valid_static_fields()) {
             return {.ok = false, .error = WalError::InvalidSegmentHeader};
+        }
+
+        if (segment_header.header_crc != calculate_segment_header_crc(segment_header)) {
+            return {.ok = false, .error = WalError::HeaderChecksumMismatch};
         }
 
         WalSegmentScanResult result{
@@ -58,7 +52,7 @@ namespace wal
             }
 
             if (!header.has_valid_static_fields()
-                || header.header_crc != header_crc(header)
+                || header.header_crc != calculate_record_header_crc(header)
                 || header.stream_id != segment_header.stream_id
                 || header.epoch != segment_header.epoch
                 || header.sequence != expected_sequence) {

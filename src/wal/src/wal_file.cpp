@@ -22,4 +22,9 @@ namespace wal
         }
         return std::filesystem::file_size(file_path);
     }
+
+    void WalFile::truncate(const std::filesystem::path& file_path, std::uint64_t size)
+    {
+        std::filesystem::resize_file(file_path, size);
+    }
 }
