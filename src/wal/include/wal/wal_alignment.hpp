@@ -1,11 +1,14 @@
 #pragma once
 
-#include "wal/wal_types.hpp"
+#include <cstdint>
 
-namespace wal {
+namespace wal
+{
+    [[nodiscard]] std::uint32_t align_up(
+        std::uint32_t value,
+        std::uint32_t alignment) noexcept;
 
-inline constexpr ByteSize kWalAlignment = 8;
-
-[[nodiscard]] ByteSize align_to_wal_boundary(ByteSize size) noexcept;
-
-} // namespace wal
+    [[nodiscard]] std::uint32_t padding_for(
+        std::uint32_t value,
+        std::uint32_t alignment) noexcept;
+}

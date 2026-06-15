@@ -1,10 +1,13 @@
 #include "wal/wal_record_header.hpp"
 
-namespace wal {
-
-ByteSize wal_record_header_size() noexcept
+namespace wal
 {
-    return sizeof(WalRecordHeader);
+    bool WalRecordHeader::has_valid_static_fields() const noexcept
+    {
+        return magic == WalRecordMagic
+            && version == WalFormatVersion
+            && header_size == sizeof(WalRecordHeader)
+            && record_length >= sizeof(WalRecordHeader)
+            && payload_length <= record_length - sizeof(WalRecordHeader);
+    }
 }
-
-} // namespace wal

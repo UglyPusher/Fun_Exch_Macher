@@ -1,14 +1,15 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 
 namespace wal
 {
-    [[nodiscard]] std::uint32_t align_up(
-        std::uint32_t value,
-        std::uint32_t alignment) noexcept;
-
-    [[nodiscard]] std::uint32_t padding_for(
-        std::uint32_t value,
-        std::uint32_t alignment) noexcept;
+    class WalFile
+    {
+    public:
+        static void ensure_parent_directory_exists(const std::filesystem::path& file_path);
+        static bool exists(const std::filesystem::path& file_path);
+        static std::uint64_t size(const std::filesystem::path& file_path);
+    };
 }

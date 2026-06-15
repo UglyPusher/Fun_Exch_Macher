@@ -1,6 +1,7 @@
 add_library(wal STATIC
     src/wal_position.cpp
     src/wal_record_header.cpp
+    src/wal_segment_header.cpp
     src/wal_result.cpp
     src/wal_error.cpp
     src/wal_segment_writer.cpp

@@ -1,16 +1,25 @@
 #include "wal/wal_file.hpp"
 
-namespace wal {
-
-std::uint32_t align_up(std::uint32_t value, std::uint32_t alignment) noexcept
+namespace wal
 {
-    const auto remainder = value % alignment;
-    return remainder == 0 ? value : value + (alignment - remainder);
-}
+    void WalFile::ensure_parent_directory_exists(const std::filesystem::path& file_path)
+    {
+        const auto parent = file_path.parent_path();
+        if (!parent.empty()) {
+            std::filesystem::create_directories(parent);
+        }
+    }
 
-std::uint32_t padding_for(std::uint32_t value, std::uint32_t alignment) noexcept
-{
-    return align_up(value, alignment) - value;
-}
+    bool WalFile::exists(const std::filesystem::path& file_path)
+    {
+        return std::filesystem::exists(file_path);
+    }
 
-} // namespace wal
+    std::uint64_t WalFile::size(const std::filesystem::path& file_path)
+    {
+        if (!exists(file_path)) {
+            return 0;
+        }
+        return std::filesystem::file_size(file_path);
+    }
+}

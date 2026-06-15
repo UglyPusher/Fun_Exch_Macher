@@ -29,6 +29,4 @@ namespace wal
     };
 
     static_assert(std::is_trivially_copyable_v<WalRecordHeader>);
-
-    [[nodiscard]] ByteSize wal_record_header_size() noexcept;
 }
