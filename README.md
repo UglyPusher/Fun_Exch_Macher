@@ -196,6 +196,3 @@ First meaningful prototype target:
 - raw and typed WAL adapters;
 - simple file segment writer/reader.
 
-## Interview Positioning
-
-This is a small deterministic trading-core prototype showing explicit ordering, append-only logs, replay, order book invariants, and clean boundaries between ingress, normalization, matching, and durability infrastructure.
