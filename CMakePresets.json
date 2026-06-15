@@ -1,0 +1,109 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "debug",
+      "displayName": "Debug",
+      "description": "Local debug build",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "release",
+      "displayName": "Release",
+      "description": "Optimized release build",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "debug",
+      "displayName": "Build Debug",
+      "configurePreset": "debug"
+    },
+    {
+      "name": "release",
+      "displayName": "Build Release",
+      "configurePreset": "release"
+    },
+    {
+      "name": "run",
+      "displayName": "Run Debug App",
+      "configurePreset": "debug",
+      "targets": ["run"]
+    },
+    {
+      "name": "debug-run",
+      "displayName": "Debug App With GDB",
+      "configurePreset": "debug",
+      "targets": ["debug"]
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "debug",
+      "displayName": "Test Debug",
+      "configurePreset": "debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "release",
+      "displayName": "Test Release",
+      "configurePreset": "release",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ],
+  "workflowPresets": [
+    {
+      "name": "build",
+      "displayName": "Configure And Build Debug",
+      "steps": [
+        {"type": "configure", "name": "debug"},
+        {"type": "build", "name": "debug"}
+      ]
+    },
+    {
+      "name": "test",
+      "displayName": "Configure, Build, And Test Debug",
+      "steps": [
+        {"type": "configure", "name": "debug"},
+        {"type": "build", "name": "debug"},
+        {"type": "test", "name": "debug"}
+      ]
+    },
+    {
+      "name": "run",
+      "displayName": "Configure And Run Debug App",
+      "steps": [
+        {"type": "configure", "name": "debug"},
+        {"type": "build", "name": "run"}
+      ]
+    },
+    {
+      "name": "debug",
+      "displayName": "Configure And Debug App",
+      "steps": [
+        {"type": "configure", "name": "debug"},
+        {"type": "build", "name": "debug-run"}
+      ]
+    }
+  ]
+}

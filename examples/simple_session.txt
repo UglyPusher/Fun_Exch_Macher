@@ -1,0 +1,5 @@
+# Example matching engine session.
+# Format is intentionally left open while the parser is being designed.
+
+ADD order_id=1 side=BUY price=100 quantity=10
+ADD order_id=2 side=SELL price=100 quantity=5
