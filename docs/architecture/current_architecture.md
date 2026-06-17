@@ -5,39 +5,43 @@ This document describes what is implemented in the current codebase. For the int
 ## Current Implemented Flow
 
 ```text
-[Domain Storage DTOs]
+[OrderCommandRecordV1]
         |
         v
-[Typed WAL Adapter]
+[Typed Command WAL Writer]
         |
         v
-[Raw WAL API]
-        |
-        v
-[Binary Segment Writer / Reader / Scanner]
-        |
-        v
-[Pending Positions]
+[Binary Command WAL Segment]
         |
         v
 [Commit / Flush Ack]
         |
         v
-[Committed Position Queue]
-        |
-        v
 [Committed Command Reader]
         |
         v
-[DummyInstrumentEngine]
+[InstrumentEngine]
         |
         v
-[Execution Event WAL]
+[OrderBook NewOrder FSM]
+        |
+        v
+[Typed Event WAL Writer]
+        |
+        v
+[Binary Execution Event WAL Segment]
+        |
+        v
+[Committed Event Reader]
 ```
 
-The current prototype is centered on the WAL integrity boundary and fixed-layout domain storage records. It now has a dummy engine pipeline that proves matcher I/O, but it does not yet run a real order book or matcher.
+The current prototype now has the first real matcher I/O cycle for `NewOrder`:
 
-The first in-memory `OrderBook` FSM also exists for `NewOrder`, but it is not wired into the WAL pipeline yet.
+```text
+Command WAL -> InstrumentEngine -> OrderBook mutation -> Execution Event WAL
+```
+
+This is still intentionally narrow. It proves the WAL boundaries, typed DTO boundaries, commit visibility, command-to-event correlation, and in-memory book mutation for `NewOrder` only.
 
 ## Implemented Now
 
@@ -62,15 +66,16 @@ src/domain/
   - RecordType enum
 
 src/core/
-  - DummyInstrumentEngine
-  - command-to-OrderAccepted event conversion
-  - in-memory OrderBook FSM for NewOrder
+  - matching enum constants for command, side, TIF, event type, rejection reason
+  - DummyInstrumentEngine retained as an earlier scaffold
+  - InstrumentEngine for NewOrder
+  - InstrumentEngine owns an in-memory OrderBook
+  - OrderBook FSM for NewOrder
   - passive resting
   - price/time matching against resting liquidity
   - partial fill and full fill event generation
   - duplicate order rejection
   - no Cancel/Replace support yet
-  - no real InstrumentEngine wiring yet
 
 src/app/
   - placeholder CLI entrypoint
@@ -78,7 +83,7 @@ src/app/
 tests/
   - WAL behavior tests
   - in-memory OrderBook NewOrder tests
-  - dummy Command WAL -> engine -> Event WAL pipeline test
+  - Command WAL -> InstrumentEngine -> Event WAL pipeline test
   - placeholder smoke tests for matching and replay
 ```
 
@@ -94,31 +99,34 @@ matching_engine_core ---------------> matching_engine_wal
 matching_engine_app
 ```
 
-`matching_engine_core` is now a small library. It links the domain DTO layer and WAL library, and contains the dummy instrument engine used to verify matcher I/O before the real instrument engine is wired in.
-It also contains the first in-memory `OrderBook` implementation for `NewOrder`.
+`matching_engine_core` is now a small library. It links the domain DTO layer and WAL library, contains the `InstrumentEngine`, and owns the first in-memory `OrderBook` implementation for `NewOrder`.
 
-## Current Dummy Pipeline
+## Current Instrument Pipeline
 
 ```text
-OrderCommandRecordV1
+OrderCommandRecordV1[]
     -> Command WAL append
     -> Command WAL commit ack
     -> committed command read through typed DTO boundary
-    -> DummyInstrumentEngine
-    -> ExecutionEventRecordV1(OrderAccepted)
+    -> InstrumentEngine.apply(command)
+    -> OrderBook.apply_new_order(command)
+    -> ExecutionEventRecordV1[]
     -> Event WAL append
     -> Event WAL commit ack
     -> committed event read through typed DTO boundary
 ```
 
-The dummy engine intentionally does not match orders. It copies command identity and order fields into an `OrderAccepted` event so the project can verify:
+The pipeline test covers:
 
 ```text
-- matcher input boundary
-- matcher output boundary
-- commit visibility
-- typed DTO serialization/deserialization
+- passive buy
+- passive sell
+- aggressive full fill
+- partial fill with resting remainder
+- duplicate order rejection
+- event sequence continuity
 - command_sequence correlation
+- WAL reader CRC/header/sequence validation on readback
 ```
 
 ## Current OrderBook Scope
@@ -151,7 +159,7 @@ Aggressive partial fill with resting remainder:
   OrderPartiallyFilled
 ```
 
-The current `OrderBook` is deliberately pure in-memory code. It does not know about WAL files, disk writers, command readers, or event writers.
+The current `OrderBook` remains pure in-memory code. It does not know about WAL files, disk writers, command readers, or event writers.
 
 ## Current WAL Shape
 
@@ -193,9 +201,7 @@ Current WAL properties:
 - per-instrument command stream ownership
 - risk checks
 - reservation manager
-- real matcher command application
 - Cancel/Replace support
-- WAL pipeline integration for the real InstrumentEngine
 - deterministic replay harness comparing generated events with stored event WAL
 - portfolio state projection
 - accounting projection
@@ -208,18 +214,10 @@ Current WAL properties:
 
 ## Current Source Of Truth
 
-At the current stage, the reliable implemented source-of-truth mechanism is the WAL storage layer itself:
+At the current stage, the reliable implemented source-of-truth mechanism is the WAL storage layer plus deterministic `NewOrder` matching rules:
 
 ```text
-Binary segment file
-    -> Raw WAL validation
-    -> Typed DTO boundary
+Command WAL + NewOrder Matching Rules = Execution Event WAL
 ```
 
-At the architecture level, the intended truth model is still:
-
-```text
-Command WAL + Matching Rules = Execution Event WAL
-```
-
-The dummy pipeline exercises the I/O shape of this invariant. Full deterministic validation still waits for real matching rules and replay comparison.
+Full historical replay comparison is not implemented yet, but the current pipeline already regenerates and stores execution events from committed command input.

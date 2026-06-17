@@ -20,6 +20,7 @@ target_include_directories(matching_engine_domain PUBLIC
 
 add_library(matching_engine_core
     src/core/src/dummy_instrument_engine.cpp
+    src/core/src/instrument_engine.cpp
     src/core/src/order_book.cpp
 )
 target_include_directories(matching_engine_core PUBLIC
@@ -77,7 +78,7 @@ endfunction()
 add_matching_engine_test(order_book_tests tests/order_book_tests.cpp)
 add_matching_engine_test(matching_tests tests/matching_tests.cpp)
 add_matching_engine_test(replay_tests tests/replay_tests.cpp)
-add_matching_engine_test(dummy_engine_wal_pipeline_tests tests/dummy_engine_wal_pipeline_tests.cpp)
+add_matching_engine_test(instrument_engine_wal_pipeline_tests tests/instrument_engine_wal_pipeline_tests.cpp)
 
 add_matching_engine_test(wal_record_header_tests tests/wal/wal_record_header_tests.cpp)
 add_matching_engine_test(wal_segment_writer_tests tests/wal/wal_segment_writer_tests.cpp)
