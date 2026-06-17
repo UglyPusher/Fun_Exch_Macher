@@ -18,13 +18,15 @@ Implemented now:
 - Typed WAL adapters for trivially-copyable storage DTOs.
 - Binary segment writer/reader/scanner with segment headers, record headers, payload CRC32, sequence validation, and trailing-record detection.
 - Domain storage DTOs for order commands and execution events.
+- Dummy instrument engine that turns a committed order command into an `OrderAccepted` execution event.
+- End-to-end dummy pipeline test covering Command WAL -> committed command reader -> dummy engine -> Event WAL -> event reader.
 - WAL-focused tests covering headers, checksum stability, segment write/read, recovery scanning, and typed adapters.
 - A tiny CLI entrypoint that loads `examples/simple_session.txt` as a placeholder app target.
 
 Not implemented yet:
 
 - Actual order book FSM.
-- Matcher command application.
+- Real matcher command application.
 - Execution event generation from matching rules.
 - Deterministic replay harness comparing generated events with stored event WAL.
 - Ingress normalizer/router and per-instrument command streams.
@@ -69,6 +71,7 @@ There is deliberately no single global sequence for everything. Ingress, command
 docs/                 Architecture and behavior notes
 examples/             Sample input sessions
 src/app/              CLI entrypoint
+src/core/             Dummy engine and future matching core boundary
 src/domain/           Storage DTOs and domain record types
 src/wal/              WAL core, typed adapters, and segment storage
 tests/                Smoke and WAL behavior tests

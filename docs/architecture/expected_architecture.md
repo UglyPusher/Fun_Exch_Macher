@@ -28,7 +28,7 @@ Legend:
 [Command WAL]                      [partially implemented: WAL storage + DTOs exist]
         |
         v
-[Instrument Engine]                [stub / planned]
+[Instrument Engine]                [partially implemented: dummy engine scaffold]
         |
         +--> [OrderBook]           [stub / planned]
         +--> [Continuous Matcher]  [stub / planned]
@@ -55,7 +55,7 @@ The first prototype is intentionally narrower than this diagram. The target arch
 | Risk Stub | stub / planned | Placeholder boundary for future pre-trade checks. |
 | Reservation Manager | stub / planned | Placeholder boundary for asset reservation and post-trade reserve release. |
 | Command WAL | partially implemented | WAL subsystem exists; command DTO exists; matcher integration is not implemented yet. |
-| Instrument Engine | stub / planned | Intended owner of per-instrument deterministic processing. |
+| Instrument Engine | partially implemented | Dummy engine scaffold exists to prove Command WAL -> Event WAL I/O before real matching. |
 | OrderBook | stub / planned | Tests currently exist as smoke placeholders only. |
 | Continuous Matcher | stub / planned | Matching rules are documented, but command application is not implemented yet. |
 | Auction Logic | future | Deliberately out of first prototype scope. |
@@ -119,10 +119,10 @@ MATCHING SIDE
   Read committed commands              [partially implemented at WAL reader level]
       |
       v
-  Apply to instrument state            [stub / planned]
+  Apply to instrument state            [partially implemented: dummy accepted-event engine]
       |
       v
-  Emit execution events                [stub / planned]
+  Emit execution events                [partially implemented: dummy OrderAccepted event]
 
 POST-TRADE SIDE
   Read committed events                [partially implemented at WAL reader level]

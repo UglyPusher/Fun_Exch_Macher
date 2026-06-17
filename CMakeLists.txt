@@ -18,8 +18,13 @@ target_include_directories(matching_engine_domain PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/domain/include
 )
 
-add_library(matching_engine_core INTERFACE)
-target_link_libraries(matching_engine_core INTERFACE
+add_library(matching_engine_core
+    src/core/src/dummy_instrument_engine.cpp
+)
+target_include_directories(matching_engine_core PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/include
+)
+target_link_libraries(matching_engine_core PUBLIC
     matching_engine_domain
     matching_engine_wal
 )
@@ -71,6 +76,7 @@ endfunction()
 add_matching_engine_test(order_book_tests tests/order_book_tests.cpp)
 add_matching_engine_test(matching_tests tests/matching_tests.cpp)
 add_matching_engine_test(replay_tests tests/replay_tests.cpp)
+add_matching_engine_test(dummy_engine_wal_pipeline_tests tests/dummy_engine_wal_pipeline_tests.cpp)
 
 add_matching_engine_test(wal_record_header_tests tests/wal/wal_record_header_tests.cpp)
 add_matching_engine_test(wal_segment_writer_tests tests/wal/wal_segment_writer_tests.cpp)

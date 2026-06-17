@@ -24,9 +24,18 @@ This document describes what is implemented in the current codebase. For the int
         |
         v
 [Committed Position Queue]
+        |
+        v
+[Committed Command Reader]
+        |
+        v
+[DummyInstrumentEngine]
+        |
+        v
+[Execution Event WAL]
 ```
 
-The current prototype is centered on the WAL integrity boundary and fixed-layout domain storage records. It does not yet run a real order book or matcher.
+The current prototype is centered on the WAL integrity boundary and fixed-layout domain storage records. It now has a dummy engine pipeline that proves matcher I/O, but it does not yet run a real order book or matcher.
 
 ## Implemented Now
 
@@ -50,11 +59,17 @@ src/domain/
   - ExecutionEventRecordV1
   - RecordType enum
 
+src/core/
+  - DummyInstrumentEngine
+  - command-to-OrderAccepted event conversion
+  - no order book and no real matching rules yet
+
 src/app/
   - placeholder CLI entrypoint
 
 tests/
   - WAL behavior tests
+  - dummy Command WAL -> engine -> Event WAL pipeline test
   - placeholder smoke tests for order book, matching, and replay
 ```
 
@@ -70,7 +85,31 @@ matching_engine_core ---------------> matching_engine_wal
 matching_engine_app
 ```
 
-`matching_engine_core` is currently an interface target that links the domain DTO layer and WAL library. The actual matching core is not implemented yet.
+`matching_engine_core` is now a small library. It links the domain DTO layer and WAL library, and contains the dummy instrument engine used to verify matcher I/O before the real order book exists.
+
+## Current Dummy Pipeline
+
+```text
+OrderCommandRecordV1
+    -> Command WAL append
+    -> Command WAL commit ack
+    -> committed command read through typed DTO boundary
+    -> DummyInstrumentEngine
+    -> ExecutionEventRecordV1(OrderAccepted)
+    -> Event WAL append
+    -> Event WAL commit ack
+    -> committed event read through typed DTO boundary
+```
+
+The dummy engine intentionally does not match orders. It copies command identity and order fields into an `OrderAccepted` event so the project can verify:
+
+```text
+- matcher input boundary
+- matcher output boundary
+- commit visibility
+- typed DTO serialization/deserialization
+- command_sequence correlation
+```
 
 ## Current WAL Shape
 
@@ -113,7 +152,7 @@ Current WAL properties:
 - risk checks
 - reservation manager
 - actual order book FSM
-- matcher command application
+- real matcher command application
 - execution event generation from matching rules
 - deterministic replay harness comparing generated events with stored event WAL
 - portfolio state projection
@@ -141,4 +180,4 @@ At the architecture level, the intended truth model is still:
 Command WAL + Matching Rules = Execution Event WAL
 ```
 
-However, the matcher and execution-event generation pieces are not present yet, so this invariant is documented but not fully executable today.
+The dummy pipeline exercises the I/O shape of this invariant. Full deterministic validation still waits for real matching rules and replay comparison.
