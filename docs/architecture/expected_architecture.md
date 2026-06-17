@@ -1,0 +1,178 @@
+# Expected Architecture
+
+This document describes the intended end-state architecture. Some blocks are deliberate stubs: they are part of the design, but are not implemented in the current prototype yet.
+
+Legend:
+
+```text
+[implemented]       exists in the current codebase
+[stub / planned]    intentionally designed, not implemented yet
+[future]            beyond the first meaningful prototype
+```
+
+## High-Level Flow
+
+```text
+[Client / Gateway]                 [stub / planned]
+        |
+        v
+[Normalizer / Router]              [stub / planned]
+        |
+        v
+[Risk Stub]                        [stub / planned]
+        |
+        v
+[Reservation Manager]              [stub / planned]
+        |
+        v
+[Command WAL]                      [partially implemented: WAL storage + DTOs exist]
+        |
+        v
+[Instrument Engine]                [stub / planned]
+        |
+        +--> [OrderBook]           [stub / planned]
+        +--> [Continuous Matcher]  [stub / planned]
+        +--> [Auction Logic]       [future]
+        +--> [Session FSM]         [future]
+        |
+        v
+[Execution Event WAL]              [partially implemented: WAL storage + DTOs exist]
+        |
+        +--> [Reservation Manager]       [stub / planned]
+        +--> [Portfolio State]           [stub / planned]
+        +--> [Accounting Projection]     [stub / planned]
+        +--> [Market Data Projection]    [stub / planned]
+```
+
+The first prototype is intentionally narrower than this diagram. The target architecture keeps post-trade and risk-related blocks visible so that the command/event boundaries are designed with those consumers in mind from the beginning.
+
+## Component Status
+
+| Component | Status | Notes |
+| --- | --- | --- |
+| Client / Gateway | stub / planned | External protocol handling is outside the first prototype. |
+| Normalizer / Router | stub / planned | Current code has domain storage DTOs, but no ingress normalizer/router. |
+| Risk Stub | stub / planned | Placeholder boundary for future pre-trade checks. |
+| Reservation Manager | stub / planned | Placeholder boundary for asset reservation and post-trade reserve release. |
+| Command WAL | partially implemented | WAL subsystem exists; command DTO exists; matcher integration is not implemented yet. |
+| Instrument Engine | stub / planned | Intended owner of per-instrument deterministic processing. |
+| OrderBook | stub / planned | Tests currently exist as smoke placeholders only. |
+| Continuous Matcher | stub / planned | Matching rules are documented, but command application is not implemented yet. |
+| Auction Logic | future | Deliberately out of first prototype scope. |
+| Session FSM | future | Deliberately out of first prototype scope. |
+| Execution Event WAL | partially implemented | WAL subsystem exists; execution event DTO exists; generation from matcher is not implemented yet. |
+| Portfolio State | stub / planned | Downstream projection from execution events. |
+| Accounting Projection | stub / planned | Downstream projection from execution events. |
+| Market Data Projection | stub / planned | Downstream public book/trades projection. |
+
+## Expected WAL Boundary
+
+The WAL boundary is binary and write-ack driven. A record or batch becomes visible to the next stage only after the disk writer confirms the write/flush.
+
+```text
+[Command WAL API] ---> [Pending Records / Batch]   [implemented in writer state]
+                           |
+                           v
+                      [Disk Writer]                [implemented as binary segment writer]
+                           |
+                      write/flush ack              [partially implemented: flush, not fsync]
+                           |
+                           v
+                    [Committed Queue]              [implemented as committed position queue]
+                           |
+                           v
+                    [Command Reader]               [implemented as raw/typed segment reader]
+```
+
+Analogous target event path:
+
+```text
+[Event WAL API] ---> [Pending Records / Batch]     [implemented in writer state]
+                         |
+                         v
+                    [Disk Writer]                  [implemented as binary segment writer]
+                         |
+                    write/flush ack                [partially implemented: flush, not fsync]
+                         |
+                         v
+                  [Committed Event Queue]          [implemented as committed position queue]
+```
+
+The current WAL implementation is strict and binary: segment files, segment headers, record headers, payload CRC32, sequence validation, raw readers/writers, typed adapters, recovery scanning, pending positions, and committed-position publishing after commit.
+
+## Logical Target Flow
+
+```text
+CLIENT SIDE
+  Client Order
+      |
+      v
+  Normalize / Validate                 [stub / planned]
+      |
+      v
+  Risk check / reserve assets          [stub / planned]
+      |
+      v
+  Append Command                       [partially implemented at WAL/DTO level]
+
+MATCHING SIDE
+  Read committed commands              [partially implemented at WAL reader level]
+      |
+      v
+  Apply to instrument state            [stub / planned]
+      |
+      v
+  Emit execution events                [stub / planned]
+
+POST-TRADE SIDE
+  Read committed events                [partially implemented at WAL reader level]
+      |
+      +--> consume/release reserves    [stub / planned]
+      +--> update portfolio            [stub / planned]
+      +--> accounting                  [stub / planned]
+      +--> market data                 [stub / planned]
+```
+
+## Target In-Memory State
+
+```text
+Instrument Engine:                    [stub / planned]
+  - market phase
+  - order book
+
+Reservation Manager:                  [stub / planned]
+  - reserves by client/order/asset
+
+Portfolio State:                      [stub / planned]
+  - cash
+  - positions
+
+Accounting Projection:                [stub / planned]
+  - deal ledger / cash movements
+
+Market Data Projection:               [stub / planned]
+  - public book/trades view
+```
+
+## Sources Of Truth
+
+```text
+Command WAL             source of accepted normalized commands
+Execution Event WAL     source of deterministic execution facts
+Snapshots               planned recovery accelerator, not implemented yet
+In-memory state         working state only, not a source of truth
+```
+
+## First Prototype Cut
+
+The first meaningful prototype should focus on this narrower slice:
+
+```text
+Command WAL
+    -> Single-instrument deterministic matcher
+    -> OrderBook FSM
+    -> Execution Event WAL
+    -> Replay validation
+```
+
+Risk, reservation, portfolio, accounting, and market-data blocks remain visible in the target design as integration points, but they should stay as stubs until the matching/replay core is solid.

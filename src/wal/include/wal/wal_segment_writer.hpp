@@ -4,8 +4,10 @@
 #include "wal/wal_record_header.hpp"
 #include "wal/wal_segment_header.hpp"
 
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <queue>
 #include <vector>
 
 namespace wal
@@ -28,6 +30,12 @@ namespace wal
         WalCommitResult commit() override;
 
         [[nodiscard]] WalPosition last_position() const noexcept override;
+        [[nodiscard]] WalPosition last_committed_position() const noexcept;
+        [[nodiscard]] bool has_committed_position() const noexcept;
+        [[nodiscard]] std::size_t pending_count() const noexcept;
+        [[nodiscard]] std::size_t committed_queue_size() const noexcept;
+
+        bool pop_committed_position(WalPosition& out);
 
     private:
         WalAppendResult write_record(
@@ -52,8 +60,11 @@ namespace wal
         EpochId epoch_ = 0;
         SequenceNumber next_sequence_ = 1;
         WalPosition last_position_ {};
+        WalPosition last_committed_position_ {};
         WalError open_error_ = WalError::None;
 
         std::vector<std::byte> write_buffer_;
+        std::vector<WalPosition> pending_positions_;
+        std::queue<WalPosition> committed_positions_;
     };
 }

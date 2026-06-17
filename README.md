@@ -77,6 +77,8 @@ tests/                Smoke and WAL behavior tests
 Detailed design notes live in:
 
 - `docs/architecture.md`
+- `docs/architecture/current_architecture.md`
+- `docs/architecture/expected_architecture.md`
 - `docs/wal.md`
 - `docs/matching_rules.md`
 - `docs/replay.md`
@@ -195,4 +197,3 @@ First meaningful prototype target:
 - deterministic replay test;
 - raw and typed WAL adapters;
 - simple file segment writer/reader.
-

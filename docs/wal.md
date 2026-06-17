@@ -16,7 +16,7 @@ The WAL provides:
 * deterministic recovery tests;
 * separation between matching logic and downstream consumers.
 
-The first prototype keeps the WAL intentionally simple. The design should be easy to inspect, test, and replace with a more efficient implementation later.
+The first prototype keeps the WAL intentionally small, binary, and explicit. The design should be easy to inspect, test, and replace with a more efficient implementation later.
 
 ---
 
@@ -166,7 +166,7 @@ payload
 checksum
 ```
 
-For a binary implementation:
+The prototype uses a binary implementation:
 
 ```text
 +------------------+
@@ -181,39 +181,13 @@ For a binary implementation:
 +------------------+
 ```
 
-For the first prototype, a simpler text-based format is acceptable if the same semantics are preserved.
+Records are written as binary segment data. A record or batch is first written by the disk writer and only becomes visible to downstream consumers after the write/flush acknowledgement publishes its committed position.
 
 ---
 
-## 7. Prototype Format
+## 7. Binary Segment Format
 
-The first implementation may use JSON Lines.
-
-One record per line:
-
-```json
-{"seq":1,"type":"NewOrder","instrument":"EURUSD","order_id":100,"side":"Buy","price":10125,"qty":10}
-{"seq":2,"type":"NewOrder","instrument":"EURUSD","order_id":101,"side":"Sell","price":10120,"qty":4}
-```
-
-For execution events:
-
-```json
-{"seq":1,"cmd_seq":1,"type":"OrderAccepted","instrument":"EURUSD","order_id":100,"price":10125,"qty":10}
-{"seq":2,"cmd_seq":2,"type":"TradeExecuted","instrument":"EURUSD","order_id":101,"contra_order_id":100,"price":10125,"qty":4,"trade_id":1}
-{"seq":3,"cmd_seq":2,"type":"OrderFullyFilled","instrument":"EURUSD","order_id":101}
-{"seq":4,"cmd_seq":2,"type":"OrderPartiallyFilled","instrument":"EURUSD","order_id":100,"remaining_qty":6}
-```
-
-JSONL is not the target production format. It is useful because it is easy to inspect, diff, generate, and test.
-
-A later implementation may replace it with a fixed binary format.
-
----
-
-## 8. Binary Format Direction
-
-A later binary WAL format may use:
+The binary WAL format uses:
 
 ```text
 file header
@@ -253,6 +227,27 @@ struct WalRecordHeader
 This is not required for the first prototype.
 
 The first prototype should define interfaces in a way that allows changing the physical WAL format without changing the matcher.
+
+---
+
+## 8. WAL Visibility Boundary
+
+The WAL writer has two distinct stages:
+
+```text
+append(record/batch)
+    -> build binary record header
+    -> write record bytes through disk writer
+    -> keep record position pending
+
+commit()
+    -> flush disk writer
+    -> receive write acknowledgement
+    -> move pending positions to committed queue
+    -> readers/matcher may consume committed positions
+```
+
+This means an append success only says that the disk writer accepted and wrote the bytes into the writer stream. It does not publish the record to the matching side. Publication happens after commit confirms the write boundary.
 
 ---
 

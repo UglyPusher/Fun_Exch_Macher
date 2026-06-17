@@ -65,12 +65,14 @@ Implemented in this prototype:
 - writer reopen handling for existing segments;
 - truncation of incomplete trailing records on writer reopen;
 - refusal to append after middle corruption;
+- pending-to-committed writer boundary;
+- committed position queue after write/flush acknowledgement;
 - tests for corruption, recovery, sequencing, and typed boundaries.
 
 Not implemented yet:
 
 - POSIX `fsync` / `fdatasync` durability policy;
-- committed-offset visibility boundary;
+- persisted committed-offset metadata across process restarts;
 - multi-segment rotation;
 - replicated WAL / quorum append;
 - stream health owner;
@@ -385,10 +387,17 @@ src/wal/doc/wal_invariants.md
 
 ## Commit Semantics
 
-Current prototype `commit()` flushes the C++ stream:
+Current prototype `commit()` flushes the C++ stream and then publishes pending record positions:
 
 ```text
-commit() -> std::ofstream::flush()
+append(record/batch)
+    -> binary disk write
+    -> pending position
+
+commit()
+    -> std::ofstream::flush()
+    -> write/flush acknowledgement
+    -> committed position queue
 ```
 
 This is not the same as durable `fsync`.
@@ -418,6 +427,7 @@ Current WAL test coverage includes:
 - aligned record length checks;
 - CRC32 stability and payload-change detection;
 - segment writer append and sequence increment;
+- segment writer pending-to-committed publication;
 - writer reopen sequence continuation;
 - incomplete tail truncation on writer reopen;
 - refusal to append after middle corruption;
@@ -451,7 +461,7 @@ The matcher should consume typed records only. If a WAL reader returns `Failed`,
 Recommended next steps:
 
 1. POSIX `fsync` / `fdatasync` commit policy.
-2. Explicit committed-offset visibility boundary.
+2. Persisted committed-offset metadata across process restarts.
 3. Multi-segment rotation and segment naming.
 4. Stream owner / health propagation layer.
 5. Recovery API that separates scan, truncate, rebuild, and operator decisions.

@@ -74,12 +74,49 @@ namespace wal
             return {.status = WalCommitStatus::Failed, .error = WalError::CannotFlushFile, .committed_up_to = last_position_};
         }
 
-        return {.status = WalCommitStatus::Committed, .error = WalError::None, .committed_up_to = last_position_};
+        for (const auto& position : pending_positions_) {
+            committed_positions_.push(position);
+            last_committed_position_ = position;
+        }
+        pending_positions_.clear();
+
+        return {.status = WalCommitStatus::Committed, .error = WalError::None, .committed_up_to = last_committed_position_};
     }
 
     WalPosition WalSegmentWriter::last_position() const noexcept
     {
         return last_position_;
+    }
+
+    WalPosition WalSegmentWriter::last_committed_position() const noexcept
+    {
+        return last_committed_position_;
+    }
+
+    bool WalSegmentWriter::has_committed_position() const noexcept
+    {
+        return !committed_positions_.empty();
+    }
+
+    std::size_t WalSegmentWriter::pending_count() const noexcept
+    {
+        return pending_positions_.size();
+    }
+
+    std::size_t WalSegmentWriter::committed_queue_size() const noexcept
+    {
+        return committed_positions_.size();
+    }
+
+    bool WalSegmentWriter::pop_committed_position(WalPosition& out)
+    {
+        if (committed_positions_.empty()) {
+            return false;
+        }
+
+        out = committed_positions_.front();
+        committed_positions_.pop();
+        return true;
     }
 
     WalAppendResult WalSegmentWriter::write_record(
@@ -104,6 +141,7 @@ namespace wal
         }
 
         last_position_ = {stream_id_, epoch_, next_sequence_++};
+        pending_positions_.push_back(last_position_);
         return {.status = WalAppendStatus::Appended, .error = WalError::None, .position = last_position_};
     }
 
@@ -151,6 +189,7 @@ namespace wal
         }
 
         last_position_ = scan_result.last_valid_position;
+        last_committed_position_ = last_position_;
         next_sequence_ = last_position_.is_valid()
             ? last_position_.sequence + 1
             : segment_header.first_sequence;

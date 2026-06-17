@@ -18,6 +18,19 @@ Those components are important in a real exchange system, but they are outside t
 
 ---
 
+## Architecture Documentation Map
+
+This file is the agreed architectural image: it explains the system boundaries, principles, and class of design we are aiming for.
+
+Implementation state is tracked separately:
+
+* `architecture/current_architecture.md` describes what exists in the codebase now.
+* `architecture/expected_architecture.md` describes the expected architecture, including deliberate stubs for components that are designed but not implemented yet.
+
+Even though this is an educational system, the larger exchange-shaped blocks are still documented as intentional boundaries. Risk, reservation, portfolio, accounting, and market-data components may remain stubs until the matching/replay core is ready, but their presence keeps the WAL and event boundaries honest.
+
+---
+
 ## 2. Design Goals
 
 The main design goals are:
@@ -151,17 +164,24 @@ It provides:
 * audit trail;
 * deterministic replay source.
 
-For the first prototype, this can be implemented as a simple file-based log. The first format may be text-based or binary-lite, as long as record order and payload integrity are explicit.
+The WAL format is binary. A command record or command batch is not visible to the matcher immediately after being accepted by the WAL API. The WAL first writes the binary record through the disk writer, waits for the write/flush acknowledgement, and only then publishes the committed position to the downstream queue.
 
-A later version may introduce:
+The intended write path is:
 
-* fixed binary record layout;
-* record length;
-* record type;
-* sequence number;
-* payload size;
-* checksum;
-* alignment.
+```text
+WAL API receives record/batch
+        |
+        v
+Disk Writer appends binary records
+        |
+        v
+write/flush acknowledgement
+        |
+        v
+Committed queue publishes positions to readers/matcher
+```
+
+This boundary prevents the matcher from consuming records that were accepted in memory but not yet confirmed by the storage layer.
 
 ### 6.4 Instrument Matcher
 
