@@ -1,0 +1,230 @@
+#include "core/order_book.hpp"
+
+#include <algorithm>
+
+namespace core
+{
+    namespace
+    {
+        bool is_buy(std::uint16_t side) noexcept
+        {
+            return side == static_cast<std::uint16_t>(Side::Buy);
+        }
+
+        bool is_sell(std::uint16_t side) noexcept
+        {
+            return side == static_cast<std::uint16_t>(Side::Sell);
+        }
+    }
+
+    OrderBook::OrderBook(std::uint64_t first_event_sequence) noexcept
+        : next_event_sequence_(first_event_sequence)
+    {
+    }
+
+    std::vector<domain::ExecutionEventRecordV1> OrderBook::apply_new_order(
+        const domain::OrderCommandRecordV1& command)
+    {
+        std::vector<domain::ExecutionEventRecordV1> events;
+
+        const auto rejection_reason = validate_new_order(command);
+        if (rejection_reason != RejectionReason::None) {
+            events.push_back(make_rejected_event(command, rejection_reason));
+            return events;
+        }
+
+        events.push_back(make_event(command, ExecutionEventType::OrderAccepted, command.quantity_lots, command.quantity_lots));
+
+        auto incoming_remaining = command.quantity_lots;
+        auto had_trade = false;
+
+        if (is_buy(command.side)) {
+            while (incoming_remaining > 0 && !asks_.empty()) {
+                auto& [best_price, orders] = *asks_.begin();
+                if (command.price_ticks < best_price) {
+                    break;
+                }
+
+                auto& resting = orders.front();
+                const auto trade_quantity = std::min(incoming_remaining, resting.remaining_quantity_lots);
+                incoming_remaining -= trade_quantity;
+                resting.remaining_quantity_lots -= trade_quantity;
+                active_orders_[resting.order_id] = resting;
+                had_trade = true;
+                events.push_back(make_trade_event(command, resting, best_price, trade_quantity, incoming_remaining));
+
+                if (resting.remaining_quantity_lots == 0) {
+                    remove_resting_order(resting);
+                    orders.pop_front();
+                    remove_empty_best_level(asks_);
+                }
+            }
+        } else {
+            while (incoming_remaining > 0 && !bids_.empty()) {
+                auto& [best_price, orders] = *bids_.begin();
+                if (command.price_ticks > best_price) {
+                    break;
+                }
+
+                auto& resting = orders.front();
+                const auto trade_quantity = std::min(incoming_remaining, resting.remaining_quantity_lots);
+                incoming_remaining -= trade_quantity;
+                resting.remaining_quantity_lots -= trade_quantity;
+                active_orders_[resting.order_id] = resting;
+                had_trade = true;
+                events.push_back(make_trade_event(command, resting, best_price, trade_quantity, incoming_remaining));
+
+                if (resting.remaining_quantity_lots == 0) {
+                    remove_resting_order(resting);
+                    orders.pop_front();
+                    remove_empty_best_level(bids_);
+                }
+            }
+        }
+
+        if (incoming_remaining == 0) {
+            events.push_back(make_event(command, ExecutionEventType::OrderFullyFilled, command.quantity_lots, 0));
+            return events;
+        }
+
+        rest_order(command, incoming_remaining);
+        events.push_back(make_event(
+            command,
+            had_trade ? ExecutionEventType::OrderPartiallyFilled : ExecutionEventType::OrderRested,
+            command.quantity_lots - incoming_remaining,
+            incoming_remaining));
+        return events;
+    }
+
+    bool OrderBook::has_order(std::uint64_t order_id) const
+    {
+        return active_orders_.contains(order_id);
+    }
+
+    std::int64_t OrderBook::best_bid_price() const
+    {
+        return bids_.empty() ? 0 : bids_.begin()->first;
+    }
+
+    std::int64_t OrderBook::best_ask_price() const
+    {
+        return asks_.empty() ? 0 : asks_.begin()->first;
+    }
+
+    std::int64_t OrderBook::remaining_quantity(std::uint64_t order_id) const
+    {
+        const auto found = active_orders_.find(order_id);
+        return found == active_orders_.end() ? 0 : found->second.remaining_quantity_lots;
+    }
+
+    std::size_t OrderBook::active_order_count() const noexcept
+    {
+        return active_orders_.size();
+    }
+
+    RejectionReason OrderBook::validate_new_order(const domain::OrderCommandRecordV1& command) const noexcept
+    {
+        if (command.command_type != static_cast<std::uint16_t>(CommandType::NewOrder)) {
+            return RejectionReason::UnsupportedCommand;
+        }
+
+        if (!is_buy(command.side) && !is_sell(command.side)) {
+            return RejectionReason::InvalidSide;
+        }
+
+        if (command.price_ticks <= 0) {
+            return RejectionReason::InvalidPrice;
+        }
+
+        if (command.quantity_lots <= 0) {
+            return RejectionReason::InvalidQuantity;
+        }
+
+        if (active_orders_.contains(command.order_id)) {
+            return RejectionReason::DuplicateOrderId;
+        }
+
+        if (command.time_in_force != static_cast<std::uint16_t>(TimeInForce::Gtc)) {
+            return RejectionReason::UnsupportedTimeInForce;
+        }
+
+        return RejectionReason::None;
+    }
+
+    domain::ExecutionEventRecordV1 OrderBook::make_event(
+        const domain::OrderCommandRecordV1& command,
+        ExecutionEventType event_type,
+        std::int64_t quantity_lots,
+        std::int64_t remaining_quantity_lots) noexcept
+    {
+        domain::ExecutionEventRecordV1 event{};
+        event.event_sequence = next_event_sequence_++;
+        event.command_sequence = command.command_sequence;
+        event.source_ingress_epoch = command.source_ingress_epoch;
+        event.source_ingress_sequence = command.source_ingress_sequence;
+        event.order_id = command.order_id;
+        event.price_ticks = command.price_ticks;
+        event.quantity_lots = quantity_lots;
+        event.remaining_quantity_lots = remaining_quantity_lots;
+        event.instrument_id = command.instrument_id;
+        event.event_type = static_cast<std::uint16_t>(event_type);
+        event.side = command.side;
+        return event;
+    }
+
+    domain::ExecutionEventRecordV1 OrderBook::make_trade_event(
+        const domain::OrderCommandRecordV1& command,
+        const RestingOrder& resting_order,
+        std::int64_t trade_price_ticks,
+        std::int64_t trade_quantity_lots,
+        std::int64_t incoming_remaining_lots) noexcept
+    {
+        auto event = make_event(command, ExecutionEventType::TradeExecuted, trade_quantity_lots, incoming_remaining_lots);
+        event.contra_order_id = resting_order.order_id;
+        event.trade_id = next_trade_id_++;
+        event.price_ticks = trade_price_ticks;
+        return event;
+    }
+
+    domain::ExecutionEventRecordV1 OrderBook::make_rejected_event(
+        const domain::OrderCommandRecordV1& command,
+        RejectionReason reason) noexcept
+    {
+        auto event = make_event(command, ExecutionEventType::OrderRejected, 0, 0);
+        event.rejection_reason = static_cast<std::uint16_t>(reason);
+        return event;
+    }
+
+    void OrderBook::rest_order(const domain::OrderCommandRecordV1& command, std::int64_t remaining_quantity_lots)
+    {
+        RestingOrder resting_order{
+            .order_id = command.order_id,
+            .client_id = command.client_id,
+            .instrument_id = command.instrument_id,
+            .side = command.side,
+            .price_ticks = command.price_ticks,
+            .remaining_quantity_lots = remaining_quantity_lots
+        };
+
+        if (is_buy(command.side)) {
+            bids_[command.price_ticks].push_back(resting_order);
+        } else {
+            asks_[command.price_ticks].push_back(resting_order);
+        }
+        active_orders_[command.order_id] = resting_order;
+    }
+
+    void OrderBook::remove_resting_order(const RestingOrder& resting_order)
+    {
+        active_orders_.erase(resting_order.order_id);
+    }
+
+    std::optional<OrderBook::RestingOrder> OrderBook::find_order(std::uint64_t order_id) const
+    {
+        const auto found = active_orders_.find(order_id);
+        if (found == active_orders_.end()) {
+            return std::nullopt;
+        }
+        return found->second;
+    }
+}

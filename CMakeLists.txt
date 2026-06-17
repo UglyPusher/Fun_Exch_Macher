@@ -20,6 +20,7 @@ target_include_directories(matching_engine_domain PUBLIC
 
 add_library(matching_engine_core
     src/core/src/dummy_instrument_engine.cpp
+    src/core/src/order_book.cpp
 )
 target_include_directories(matching_engine_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/include

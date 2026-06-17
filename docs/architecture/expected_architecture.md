@@ -30,7 +30,7 @@ Legend:
         v
 [Instrument Engine]                [partially implemented: dummy engine scaffold]
         |
-        +--> [OrderBook]           [stub / planned]
+        +--> [OrderBook]           [partially implemented: NewOrder FSM]
         +--> [Continuous Matcher]  [stub / planned]
         +--> [Auction Logic]       [future]
         +--> [Session FSM]         [future]
@@ -56,7 +56,7 @@ The first prototype is intentionally narrower than this diagram. The target arch
 | Reservation Manager | stub / planned | Placeholder boundary for asset reservation and post-trade reserve release. |
 | Command WAL | partially implemented | WAL subsystem exists; command DTO exists; matcher integration is not implemented yet. |
 | Instrument Engine | partially implemented | Dummy engine scaffold exists to prove Command WAL -> Event WAL I/O before real matching. |
-| OrderBook | stub / planned | Tests currently exist as smoke placeholders only. |
+| OrderBook | partially implemented | In-memory NewOrder FSM exists; Cancel/Replace and WAL integration are not implemented yet. |
 | Continuous Matcher | stub / planned | Matching rules are documented, but command application is not implemented yet. |
 | Auction Logic | future | Deliberately out of first prototype scope. |
 | Session FSM | future | Deliberately out of first prototype scope. |

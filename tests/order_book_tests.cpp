@@ -1,4 +1,155 @@
+#include "core/matching_types.hpp"
+#include "core/order_book.hpp"
+#include "domain/order_command_record.hpp"
+
+#include <cstdint>
+#include <initializer_list>
+#include <vector>
+
+namespace
+{
+    domain::OrderCommandRecordV1 new_order(
+        std::uint64_t sequence,
+        std::uint64_t order_id,
+        std::uint16_t side,
+        std::int64_t price_ticks,
+        std::int64_t quantity_lots)
+    {
+        domain::OrderCommandRecordV1 command{};
+        command.command_sequence = sequence;
+        command.source_ingress_epoch = 1;
+        command.source_ingress_sequence = sequence;
+        command.order_id = order_id;
+        command.client_id = 100 + order_id;
+        command.price_ticks = price_ticks;
+        command.quantity_lots = quantity_lots;
+        command.instrument_id = 77;
+        command.command_type = static_cast<std::uint16_t>(core::CommandType::NewOrder);
+        command.side = side;
+        command.time_in_force = static_cast<std::uint16_t>(core::TimeInForce::Gtc);
+        return command;
+    }
+
+    std::uint16_t event_type(const domain::ExecutionEventRecordV1& event)
+    {
+        return event.event_type;
+    }
+
+    bool has_types(
+        const std::vector<domain::ExecutionEventRecordV1>& events,
+        std::initializer_list<core::ExecutionEventType> expected)
+    {
+        if (events.size() != expected.size()) {
+            return false;
+        }
+
+        auto event = events.begin();
+        for (const auto type : expected) {
+            if (event_type(*event) != static_cast<std::uint16_t>(type)) {
+                return false;
+            }
+            ++event;
+        }
+        return true;
+    }
+}
+
 int main()
 {
+    {
+        core::OrderBook book{100};
+        const auto buy = new_order(1, 10, static_cast<std::uint16_t>(core::Side::Buy), 1000, 5);
+        const auto events = book.apply_new_order(buy);
+
+        if (!has_types(events, {core::ExecutionEventType::OrderAccepted, core::ExecutionEventType::OrderRested})) {
+            return 1;
+        }
+
+        if (events[0].event_sequence != 100 || events[1].event_sequence != 101) {
+            return 2;
+        }
+
+        if (!book.has_order(10) || book.best_bid_price() != 1000 || book.best_ask_price() != 0 || book.remaining_quantity(10) != 5) {
+            return 3;
+        }
+    }
+
+    {
+        core::OrderBook book{200};
+        const auto resting_sell = new_order(1, 20, static_cast<std::uint16_t>(core::Side::Sell), 1010, 5);
+        const auto resting_events = book.apply_new_order(resting_sell);
+        if (!has_types(resting_events, {core::ExecutionEventType::OrderAccepted, core::ExecutionEventType::OrderRested})) {
+            return 4;
+        }
+
+        const auto crossing_buy = new_order(2, 21, static_cast<std::uint16_t>(core::Side::Buy), 1020, 5);
+        const auto events = book.apply_new_order(crossing_buy);
+
+        if (!has_types(events, {
+                core::ExecutionEventType::OrderAccepted,
+                core::ExecutionEventType::TradeExecuted,
+                core::ExecutionEventType::OrderFullyFilled})) {
+            return 5;
+        }
+
+        if (events[1].contra_order_id != 20 || events[1].price_ticks != 1010 || events[1].quantity_lots != 5) {
+            return 6;
+        }
+
+        if (book.active_order_count() != 0 || book.best_ask_price() != 0 || book.best_bid_price() != 0) {
+            return 7;
+        }
+    }
+
+    {
+        core::OrderBook book{300};
+        const auto resting_sell = new_order(1, 30, static_cast<std::uint16_t>(core::Side::Sell), 1010, 3);
+        const auto resting_events = book.apply_new_order(resting_sell);
+        if (!has_types(resting_events, {core::ExecutionEventType::OrderAccepted, core::ExecutionEventType::OrderRested})) {
+            return 8;
+        }
+
+        const auto larger_buy = new_order(2, 31, static_cast<std::uint16_t>(core::Side::Buy), 1010, 7);
+        const auto events = book.apply_new_order(larger_buy);
+
+        if (!has_types(events, {
+                core::ExecutionEventType::OrderAccepted,
+                core::ExecutionEventType::TradeExecuted,
+                core::ExecutionEventType::OrderPartiallyFilled})) {
+            return 9;
+        }
+
+        if (events[1].quantity_lots != 3 || events[1].remaining_quantity_lots != 4) {
+            return 10;
+        }
+
+        if (!book.has_order(31) || book.remaining_quantity(31) != 4 || book.best_bid_price() != 1010 || book.has_order(30)) {
+            return 11;
+        }
+    }
+
+    {
+        core::OrderBook book{400};
+        const auto first = new_order(1, 40, static_cast<std::uint16_t>(core::Side::Buy), 1000, 5);
+        const auto first_events = book.apply_new_order(first);
+        if (!has_types(first_events, {core::ExecutionEventType::OrderAccepted, core::ExecutionEventType::OrderRested})) {
+            return 12;
+        }
+        const auto duplicate = new_order(2, 40, static_cast<std::uint16_t>(core::Side::Buy), 1001, 5);
+        const auto events = book.apply_new_order(duplicate);
+
+        if (!has_types(events, {core::ExecutionEventType::OrderRejected})) {
+            return 13;
+        }
+
+        if (events[0].rejection_reason != static_cast<std::uint16_t>(core::RejectionReason::DuplicateOrderId)) {
+            return 14;
+        }
+
+        if (book.remaining_quantity(40) != 5 || book.best_bid_price() != 1000) {
+            return 15;
+        }
+    }
+
     return 0;
 }

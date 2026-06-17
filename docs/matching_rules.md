@@ -233,6 +233,59 @@ client id does not own the order, if ownership checks are enabled
 
 ---
 
+## 6.5 NewOrder Event Sequencing
+
+`NewOrder` processing emits deterministic events in this order.
+
+Rejected order:
+
+```text
+OrderRejected
+```
+
+Accepted passive order that does not trade:
+
+```text
+OrderAccepted
+OrderRested
+```
+
+Accepted aggressive order that fully fills:
+
+```text
+OrderAccepted
+TradeExecuted        one event per matched resting order
+OrderFullyFilled
+```
+
+Accepted aggressive order that partially fills and leaves a resting remainder:
+
+```text
+OrderAccepted
+TradeExecuted        one event per matched resting order
+OrderPartiallyFilled
+```
+
+For the first in-memory `OrderBook` implementation, `OrderPartiallyFilled` is the terminal event for the incoming order and implies that its remaining quantity is now resting in the book.
+
+Every emitted event references the command that caused it:
+
+```text
+ExecutionEvent.command_sequence == OrderCommand.command_sequence
+```
+
+Trade events also carry:
+
+```text
+contra_order_id      resting order matched by the incoming order
+trade_id             stream-local trade sequence
+price_ticks          resting order price
+quantity_lots        executed quantity
+remaining_quantity   incoming order remaining quantity after this trade
+```
+
+---
+
 ## 7. Price Priority
 
 The best bid is the highest buy price.

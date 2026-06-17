@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/matching_types.hpp"
 #include "domain/execution_event_record.hpp"
 #include "domain/order_command_record.hpp"
 
@@ -7,11 +8,6 @@
 
 namespace core
 {
-    enum class ExecutionEventType : std::uint16_t
-    {
-        OrderAccepted = 1
-    };
-
     class DummyInstrumentEngine
     {
     public:

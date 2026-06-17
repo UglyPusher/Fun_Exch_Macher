@@ -37,6 +37,8 @@ This document describes what is implemented in the current codebase. For the int
 
 The current prototype is centered on the WAL integrity boundary and fixed-layout domain storage records. It now has a dummy engine pipeline that proves matcher I/O, but it does not yet run a real order book or matcher.
 
+The first in-memory `OrderBook` FSM also exists for `NewOrder`, but it is not wired into the WAL pipeline yet.
+
 ## Implemented Now
 
 ```text
@@ -62,15 +64,22 @@ src/domain/
 src/core/
   - DummyInstrumentEngine
   - command-to-OrderAccepted event conversion
-  - no order book and no real matching rules yet
+  - in-memory OrderBook FSM for NewOrder
+  - passive resting
+  - price/time matching against resting liquidity
+  - partial fill and full fill event generation
+  - duplicate order rejection
+  - no Cancel/Replace support yet
+  - no real InstrumentEngine wiring yet
 
 src/app/
   - placeholder CLI entrypoint
 
 tests/
   - WAL behavior tests
+  - in-memory OrderBook NewOrder tests
   - dummy Command WAL -> engine -> Event WAL pipeline test
-  - placeholder smoke tests for order book, matching, and replay
+  - placeholder smoke tests for matching and replay
 ```
 
 ## Current Build Shape
@@ -85,7 +94,8 @@ matching_engine_core ---------------> matching_engine_wal
 matching_engine_app
 ```
 
-`matching_engine_core` is now a small library. It links the domain DTO layer and WAL library, and contains the dummy instrument engine used to verify matcher I/O before the real order book exists.
+`matching_engine_core` is now a small library. It links the domain DTO layer and WAL library, and contains the dummy instrument engine used to verify matcher I/O before the real instrument engine is wired in.
+It also contains the first in-memory `OrderBook` implementation for `NewOrder`.
 
 ## Current Dummy Pipeline
 
@@ -110,6 +120,38 @@ The dummy engine intentionally does not match orders. It copies command identity
 - typed DTO serialization/deserialization
 - command_sequence correlation
 ```
+
+## Current OrderBook Scope
+
+```text
+OrderBook.apply_new_order(command)
+    -> validates NewOrder
+    -> emits deterministic events
+    -> updates in-memory bid/ask state
+```
+
+Implemented `NewOrder` event sequences:
+
+```text
+Rejected:
+  OrderRejected
+
+Passive:
+  OrderAccepted
+  OrderRested
+
+Aggressive full fill:
+  OrderAccepted
+  TradeExecuted...
+  OrderFullyFilled
+
+Aggressive partial fill with resting remainder:
+  OrderAccepted
+  TradeExecuted...
+  OrderPartiallyFilled
+```
+
+The current `OrderBook` is deliberately pure in-memory code. It does not know about WAL files, disk writers, command readers, or event writers.
 
 ## Current WAL Shape
 
@@ -151,9 +193,9 @@ Current WAL properties:
 - per-instrument command stream ownership
 - risk checks
 - reservation manager
-- actual order book FSM
 - real matcher command application
-- execution event generation from matching rules
+- Cancel/Replace support
+- WAL pipeline integration for the real InstrumentEngine
 - deterministic replay harness comparing generated events with stored event WAL
 - portfolio state projection
 - accounting projection
