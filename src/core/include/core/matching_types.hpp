@@ -29,7 +29,8 @@ namespace core
         TradeExecuted = 3,
         OrderRested = 4,
         OrderPartiallyFilled = 5,
-        OrderFullyFilled = 6
+        OrderFullyFilled = 6,
+        OrderCancelled = 7
     };
 
     enum class RejectionReason : std::uint16_t
@@ -40,6 +41,8 @@ namespace core
         InvalidPrice = 3,
         InvalidQuantity = 4,
         DuplicateOrderId = 5,
-        UnsupportedTimeInForce = 6
+        UnsupportedTimeInForce = 6,
+        UnknownOrderId = 7,
+        InstrumentMismatch = 8
     };
 }

@@ -76,6 +76,22 @@ namespace
         return command;
     }
 
+    domain::OrderCommandRecordV1 cancel_order(
+        std::uint64_t sequence,
+        std::uint64_t order_id,
+        std::uint64_t client_id)
+    {
+        domain::OrderCommandRecordV1 command{};
+        command.command_sequence = sequence;
+        command.source_ingress_epoch = 3;
+        command.source_ingress_sequence = sequence;
+        command.order_id = order_id;
+        command.client_id = client_id;
+        command.instrument_id = 77;
+        command.command_type = static_cast<std::uint16_t>(core::CommandType::CancelOrder);
+        return command;
+    }
+
     std::vector<domain::ExecutionEventRecordV1> generate_events(
         const std::vector<domain::OrderCommandRecordV1>& commands)
     {
@@ -224,6 +240,35 @@ namespace
         const auto events = generate_events(commands);
         return fails_with(commands, events, core::ReplayFailureClass::CommandSequenceBreak);
     }
+
+    bool Replay_cancel_existing_ok()
+    {
+        return replay_ok({
+            new_order(1, 1, core::Side::Buy, 1000, 5),
+            cancel_order(2, 1, 1001)
+        });
+    }
+
+    bool Replay_cancel_unknown_ok()
+    {
+        return replay_ok({
+            cancel_order(1, 1, 1001)
+        });
+    }
+
+    bool Replay_cancel_then_aggressive_order_does_not_match_cancelled_order()
+    {
+        const std::vector commands{
+            new_order(1, 1, core::Side::Buy, 1000, 5),
+            cancel_order(2, 1, 1001),
+            new_order(3, 2, core::Side::Sell, 900, 5)
+        };
+        const auto events = generate_events(commands);
+        const auto result = replay(commands, events);
+        return result.ok
+            && events.size() == 5
+            && events[4].event_type == static_cast<std::uint16_t>(core::ExecutionEventType::OrderRested);
+    }
 }
 
 int main()
@@ -260,6 +305,15 @@ int main()
     }
     if (!Replay_fails_when_command_sequence_breaks()) {
         return 11;
+    }
+    if (!Replay_cancel_existing_ok()) {
+        return 12;
+    }
+    if (!Replay_cancel_unknown_ok()) {
+        return 13;
+    }
+    if (!Replay_cancel_then_aggressive_order_does_not_match_cancelled_order()) {
+        return 14;
     }
 
     return 0;

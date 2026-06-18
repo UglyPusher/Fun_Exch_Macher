@@ -98,6 +98,32 @@ namespace core
         return events;
     }
 
+    std::vector<domain::ExecutionEventRecordV1> OrderBook::apply_cancel_order(
+        const domain::OrderCommandRecordV1& command)
+    {
+        std::vector<domain::ExecutionEventRecordV1> events;
+
+        if (command.command_type != static_cast<std::uint16_t>(CommandType::CancelOrder)) {
+            events.push_back(make_rejected_event(command, RejectionReason::UnsupportedCommand));
+            return events;
+        }
+
+        const auto resting_order = find_order(command.order_id);
+        if (!resting_order.has_value()) {
+            events.push_back(make_rejected_event(command, RejectionReason::UnknownOrderId));
+            return events;
+        }
+
+        if (resting_order->instrument_id != command.instrument_id) {
+            events.push_back(make_rejected_event(command, RejectionReason::InstrumentMismatch));
+            return events;
+        }
+
+        remove_cancelled_order(*resting_order);
+        events.push_back(make_cancelled_event(command, *resting_order));
+        return events;
+    }
+
     bool OrderBook::has_order(std::uint64_t order_id) const
     {
         return active_orders_.contains(order_id);
@@ -256,6 +282,17 @@ namespace core
         return event;
     }
 
+    domain::ExecutionEventRecordV1 OrderBook::make_cancelled_event(
+        const domain::OrderCommandRecordV1& command,
+        const RestingOrder& resting_order) noexcept
+    {
+        auto event = make_event(command, ExecutionEventType::OrderCancelled, 0, resting_order.remaining_quantity_lots);
+        event.price_ticks = resting_order.price_ticks;
+        event.side = resting_order.side;
+        event.instrument_id = resting_order.instrument_id;
+        return event;
+    }
+
     void OrderBook::rest_order(const domain::OrderCommandRecordV1& command, std::int64_t remaining_quantity_lots)
     {
         RestingOrder resting_order{
@@ -277,6 +314,35 @@ namespace core
 
     void OrderBook::remove_resting_order(const RestingOrder& resting_order)
     {
+        active_orders_.erase(resting_order.order_id);
+    }
+
+    void OrderBook::remove_cancelled_order(const RestingOrder& resting_order)
+    {
+        const auto erase_from_level = [&resting_order](auto& levels) {
+            const auto level = levels.find(resting_order.price_ticks);
+            if (level == levels.end()) {
+                return;
+            }
+
+            auto& orders = level->second;
+            const auto found = std::find_if(orders.begin(), orders.end(), [&resting_order](const auto& order) {
+                return order.order_id == resting_order.order_id;
+            });
+            if (found != orders.end()) {
+                orders.erase(found);
+            }
+            if (orders.empty()) {
+                levels.erase(level);
+            }
+        };
+
+        if (is_buy(resting_order.side)) {
+            erase_from_level(bids_);
+        } else {
+            erase_from_level(asks_);
+        }
+
         active_orders_.erase(resting_order.order_id);
     }
 

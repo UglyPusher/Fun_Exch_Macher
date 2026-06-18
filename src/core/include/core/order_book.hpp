@@ -22,6 +22,8 @@ namespace core
 
         [[nodiscard]] std::vector<domain::ExecutionEventRecordV1> apply_new_order(
             const domain::OrderCommandRecordV1& command);
+        [[nodiscard]] std::vector<domain::ExecutionEventRecordV1> apply_cancel_order(
+            const domain::OrderCommandRecordV1& command);
 
         [[nodiscard]] bool has_order(std::uint64_t order_id) const;
         [[nodiscard]] std::int64_t best_bid_price() const;
@@ -60,9 +62,13 @@ namespace core
         [[nodiscard]] domain::ExecutionEventRecordV1 make_rejected_event(
             const domain::OrderCommandRecordV1& command,
             RejectionReason reason) noexcept;
+        [[nodiscard]] domain::ExecutionEventRecordV1 make_cancelled_event(
+            const domain::OrderCommandRecordV1& command,
+            const RestingOrder& resting_order) noexcept;
 
         void rest_order(const domain::OrderCommandRecordV1& command, std::int64_t remaining_quantity_lots);
         void remove_resting_order(const RestingOrder& resting_order);
+        void remove_cancelled_order(const RestingOrder& resting_order);
         [[nodiscard]] std::optional<RestingOrder> find_order(std::uint64_t order_id) const;
 
         template <typename TLevels>

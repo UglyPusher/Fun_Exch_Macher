@@ -10,6 +10,10 @@ namespace core
     std::vector<domain::ExecutionEventRecordV1> InstrumentEngine::apply(
         const domain::OrderCommandRecordV1& command)
     {
+        if (command.command_type == static_cast<std::uint16_t>(CommandType::CancelOrder)) {
+            return order_book_.apply_cancel_order(command);
+        }
+
         return order_book_.apply_new_order(command);
     }
 

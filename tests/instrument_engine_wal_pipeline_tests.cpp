@@ -47,6 +47,22 @@ namespace
         return command;
     }
 
+    domain::OrderCommandRecordV1 cancel_order(
+        std::uint64_t sequence,
+        std::uint64_t order_id,
+        std::uint64_t client_id)
+    {
+        domain::OrderCommandRecordV1 command{};
+        command.command_sequence = sequence;
+        command.source_ingress_epoch = 7;
+        command.source_ingress_sequence = sequence;
+        command.order_id = order_id;
+        command.client_id = client_id;
+        command.instrument_id = 77;
+        command.command_type = static_cast<std::uint16_t>(core::CommandType::CancelOrder);
+        return command;
+    }
+
     bool has_types(
         const std::vector<domain::ExecutionEventRecordV1>& events,
         std::initializer_list<core::ExecutionEventType> expected)
@@ -211,7 +227,9 @@ int main()
         new_order(1002, 2, static_cast<std::uint16_t>(core::Side::Sell), 1020, 4),
         new_order(1003, 3, static_cast<std::uint16_t>(core::Side::Buy), 1030, 4),
         new_order(1004, 4, static_cast<std::uint16_t>(core::Side::Sell), 990, 8),
-        new_order(1005, 4, static_cast<std::uint16_t>(core::Side::Sell), 995, 1)
+        new_order(1005, 4, static_cast<std::uint16_t>(core::Side::Sell), 995, 1),
+        new_order(1006, 5, static_cast<std::uint16_t>(core::Side::Buy), 900, 2),
+        cancel_order(1007, 5, 1005)
     };
 
     if (!write_commands(command_wal_path, commands)) {
@@ -219,7 +237,7 @@ int main()
     }
 
     const auto generated_events = run_engine_from_command_wal(command_wal_path);
-    if (generated_events.size() != 11) {
+    if (generated_events.size() != 14) {
         return 2;
     }
 
@@ -283,6 +301,14 @@ int main()
         || !has_command_sequence(duplicate_reject, 1005)
         || duplicate_reject[0].rejection_reason != static_cast<std::uint16_t>(core::RejectionReason::DuplicateOrderId)) {
         return 10;
+    }
+
+    const auto cancel_events = events_for_command(stored_events, 1007);
+    if (!has_types(cancel_events, {core::ExecutionEventType::OrderCancelled})
+        || !has_command_sequence(cancel_events, 1007)
+        || cancel_events[0].order_id != 5
+        || cancel_events[0].remaining_quantity_lots != 2) {
+        return 11;
     }
 
     std::filesystem::remove(command_wal_path);

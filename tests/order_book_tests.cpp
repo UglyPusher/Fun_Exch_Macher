@@ -30,6 +30,23 @@ namespace
         return command;
     }
 
+    domain::OrderCommandRecordV1 cancel_order(
+        std::uint64_t sequence,
+        std::uint64_t order_id,
+        std::uint64_t client_id,
+        std::uint32_t instrument_id = 77)
+    {
+        domain::OrderCommandRecordV1 command{};
+        command.command_sequence = sequence;
+        command.source_ingress_epoch = 1;
+        command.source_ingress_sequence = sequence;
+        command.order_id = order_id;
+        command.client_id = client_id;
+        command.instrument_id = instrument_id;
+        command.command_type = static_cast<std::uint16_t>(core::CommandType::CancelOrder);
+        return command;
+    }
+
     std::uint16_t event_type(const domain::ExecutionEventRecordV1& event)
     {
         return event.event_type;
@@ -148,6 +165,126 @@ int main()
 
         if (book.remaining_quantity(40) != 5 || book.best_bid_price() != 1000) {
             return 15;
+        }
+    }
+
+    {
+        core::OrderBook book{500};
+        const auto buy = new_order(1, 50, static_cast<std::uint16_t>(core::Side::Buy), 1000, 5);
+        (void)book.apply_new_order(buy);
+
+        const auto events = book.apply_cancel_order(cancel_order(2, 50, buy.client_id));
+        if (!has_types(events, {core::ExecutionEventType::OrderCancelled})) {
+            return 16;
+        }
+        if (book.has_order(50) || book.best_bid_price() != 0 || book.active_order_count() != 0 || !book.validate_invariants()) {
+            return 17;
+        }
+        if (events[0].remaining_quantity_lots != 5 || events[0].price_ticks != 1000) {
+            return 18;
+        }
+    }
+
+    {
+        core::OrderBook book{600};
+        const auto sell = new_order(1, 60, static_cast<std::uint16_t>(core::Side::Sell), 1010, 3);
+        (void)book.apply_new_order(sell);
+
+        const auto events = book.apply_cancel_order(cancel_order(2, 60, sell.client_id));
+        if (!has_types(events, {core::ExecutionEventType::OrderCancelled})) {
+            return 19;
+        }
+        if (book.has_order(60) || book.best_ask_price() != 0 || book.active_order_count() != 0 || !book.validate_invariants()) {
+            return 20;
+        }
+    }
+
+    {
+        core::OrderBook book{700};
+        const auto events = book.apply_cancel_order(cancel_order(1, 70, 170));
+        if (!has_types(events, {core::ExecutionEventType::OrderRejected})
+            || events[0].rejection_reason != static_cast<std::uint16_t>(core::RejectionReason::UnknownOrderId)) {
+            return 21;
+        }
+        if (!book.validate_invariants()) {
+            return 22;
+        }
+    }
+
+    {
+        core::OrderBook book{800};
+        const auto buy = new_order(1, 80, static_cast<std::uint16_t>(core::Side::Buy), 1000, 5);
+        (void)book.apply_new_order(buy);
+        (void)book.apply_cancel_order(cancel_order(2, 80, buy.client_id));
+
+        const auto sell = new_order(3, 81, static_cast<std::uint16_t>(core::Side::Sell), 900, 5);
+        const auto events = book.apply_new_order(sell);
+        if (!has_types(events, {core::ExecutionEventType::OrderAccepted, core::ExecutionEventType::OrderRested})) {
+            return 23;
+        }
+        if (book.has_order(80) || !book.has_order(81) || book.best_ask_price() != 900 || book.best_bid_price() != 0) {
+            return 24;
+        }
+    }
+
+    {
+        core::OrderBook book{900};
+        const auto buy = new_order(1, 90, static_cast<std::uint16_t>(core::Side::Buy), 1000, 5);
+        (void)book.apply_new_order(buy);
+        (void)book.apply_cancel_order(cancel_order(2, 90, buy.client_id));
+        if (book.best_bid_price() != 0 || !book.validate_invariants()) {
+            return 25;
+        }
+    }
+
+    {
+        core::OrderBook book{1000};
+        const auto first = new_order(1, 100, static_cast<std::uint16_t>(core::Side::Buy), 1000, 2);
+        const auto middle = new_order(2, 101, static_cast<std::uint16_t>(core::Side::Buy), 1000, 3);
+        const auto last = new_order(3, 102, static_cast<std::uint16_t>(core::Side::Buy), 1000, 4);
+        (void)book.apply_new_order(first);
+        (void)book.apply_new_order(middle);
+        (void)book.apply_new_order(last);
+        (void)book.apply_cancel_order(cancel_order(4, 101, middle.client_id));
+
+        const auto sell = new_order(5, 103, static_cast<std::uint16_t>(core::Side::Sell), 1000, 3);
+        const auto events = book.apply_new_order(sell);
+        if (!has_types(events, {
+                core::ExecutionEventType::OrderAccepted,
+                core::ExecutionEventType::TradeExecuted,
+                core::ExecutionEventType::TradeExecuted,
+                core::ExecutionEventType::OrderFullyFilled})) {
+            return 26;
+        }
+        if (events[1].contra_order_id != 100 || events[2].contra_order_id != 102) {
+            return 27;
+        }
+        if (book.has_order(101) || book.has_order(100) || book.remaining_quantity(102) != 3 || !book.validate_invariants()) {
+            return 28;
+        }
+    }
+
+    {
+        core::OrderBook book{1100};
+        const auto buy = new_order(1, 110, static_cast<std::uint16_t>(core::Side::Buy), 1000, 5);
+        (void)book.apply_new_order(buy);
+        const auto events = book.apply_cancel_order(cancel_order(2, 110, buy.client_id, 88));
+        if (!has_types(events, {core::ExecutionEventType::OrderRejected})
+            || events[0].rejection_reason != static_cast<std::uint16_t>(core::RejectionReason::InstrumentMismatch)
+            || !book.has_order(110)) {
+            return 29;
+        }
+    }
+
+    {
+        core::OrderBook book{1200};
+        const auto buy = new_order(1, 120, static_cast<std::uint16_t>(core::Side::Buy), 1000, 5);
+        (void)book.apply_new_order(buy);
+        (void)book.apply_cancel_order(cancel_order(2, 120, buy.client_id));
+        const auto events = book.apply_cancel_order(cancel_order(3, 120, buy.client_id));
+        if (!has_types(events, {core::ExecutionEventType::OrderRejected})
+            || events[0].rejection_reason != static_cast<std::uint16_t>(core::RejectionReason::UnknownOrderId)) {
+            return 30;
         }
     }
 
