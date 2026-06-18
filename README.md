@@ -23,15 +23,16 @@ Implemented now:
 - In-memory `OrderBook` support for `ReplaceOrder` with a distinct `replacement_order_id`; replacement removes the old order and processes the replacement as a new order with fresh FIFO priority.
 - `InstrumentEngine` for `NewOrder`, `CancelOrder`, and `ReplaceOrder` that owns an in-memory `OrderBook`.
 - Deterministic replay validation harness comparing regenerated execution events with stored execution events through normalized event fields.
+- Market data projection from Execution Event WAL into public book depth and trade tape.
 - End-to-end instrument pipeline test covering Command WAL -> committed command reader -> InstrumentEngine -> Event WAL -> event reader.
 - WAL-focused tests covering headers, checksum stability, segment write/read, recovery scanning, and typed adapters.
 - Replay tests covering happy paths, event count mismatch, event field mismatch, event order mismatch, extra/missing stored events, command sequence breaks, cancel replay, and replace replay.
-- CLI/demo runner with `run`, `replay`, and `dump-events` commands.
+- CLI/demo runner with `run`, `replay`, `dump-events`, `dump-book`, and `dump-trades` commands.
 
 Not implemented yet:
 
 - Ingress normalizer/router and per-instrument command streams.
-- Risk, reservation, portfolio, accounting, market data, snapshots, fsync/fdatasync durability policy, and multi-segment rotation.
+- Risk, reservation, portfolio, accounting, snapshots, fsync/fdatasync durability policy, and multi-segment rotation.
 
 ## Architecture Direction
 
@@ -75,6 +76,7 @@ examples/             Sample input sessions
 src/app/              CLI entrypoint
 src/core/             Instrument engine, order book, and matching core boundary
 src/domain/           Storage DTOs and domain record types
+src/projections/      Downstream projections from execution events
 src/wal/              WAL core, typed adapters, and segment storage
 tests/                Smoke and WAL behavior tests
 ```
@@ -159,6 +161,13 @@ Dump stored execution events:
 ./build/debug/matching_engine dump-events wal/events.wal
 ```
 
+Dump public book and trade tape from Execution Event WAL:
+
+```bash
+./build/debug/matching_engine dump-book wal/events.wal
+./build/debug/matching_engine dump-trades wal/events.wal
+```
+
 Scenario format:
 
 ```text
@@ -209,6 +218,7 @@ Current test groups include:
 - OrderBook matching behavior for passive orders, aggressive fills, duplicate rejection, cancel behavior, and replace behavior.
 - Instrument pipeline behavior through Command WAL, `InstrumentEngine`, Execution Event WAL, and typed event readback.
 - Replay validation of regenerated events against stored event streams.
+- Market data projection from Execution Event WAL into public book/trade state.
 - CLI/demo runner smoke checked through scenario files.
 
 ## Scope Guard
@@ -233,5 +243,6 @@ First meaningful prototype target:
 - execution event WAL;
 - deterministic replay test;
 - demo runner from scenario file to Replay OK;
+- market data projection from event WAL;
 - raw and typed WAL adapters;
 - simple file segment writer/reader.

@@ -4,6 +4,7 @@
 #include "core/instrument_engine.hpp"
 #include "core/replay.hpp"
 #include "domain/record_types.hpp"
+#include "projections/market_data_projection.hpp"
 #include "wal/typed_wal_reader.hpp"
 #include "wal/typed_wal_writer.hpp"
 #include "wal/wal_segment_reader.hpp"
@@ -77,7 +78,20 @@ namespace
             << "usage:\n"
             << "  matching_engine run <scenario> [command.wal] [event.wal]\n"
             << "  matching_engine replay <command.wal> <event.wal>\n"
-            << "  matching_engine dump-events <event.wal>\n";
+            << "  matching_engine dump-events <event.wal>\n"
+            << "  matching_engine dump-book <event.wal>\n"
+            << "  matching_engine dump-trades <event.wal>\n";
+    }
+
+    const char* side_name(std::uint16_t side)
+    {
+        if (side == static_cast<std::uint16_t>(core::Side::Buy)) {
+            return "BUY";
+        }
+        if (side == static_cast<std::uint16_t>(core::Side::Sell)) {
+            return "SELL";
+        }
+        return "NA";
     }
 
     bool write_commands(
@@ -255,6 +269,95 @@ namespace
 
         return 0;
     }
+
+    bool apply_projection_from_event_wal(
+        projections::MarketDataProjection& projection,
+        const std::filesystem::path& event_wal)
+    {
+        wal::WalSegmentReader raw_reader{event_wal};
+        wal::TypedWalReader<domain::ExecutionEventRecordV1, execution_event_record_type> reader{raw_reader};
+
+        while (true) {
+            domain::ExecutionEventRecordV1 event{};
+            const auto read = reader.read_next(event);
+            if (read.status == wal::WalReadStatus::EndOfLog) {
+                return true;
+            }
+            if (read.status != wal::WalReadStatus::RecordRead) {
+                std::cerr << "matching_engine: failed to read event WAL\n";
+                return false;
+            }
+
+            const auto applied = projection.apply(event);
+            if (applied.status == projections::ProjectionApplyStatus::Rejected) {
+                std::cerr << "matching_engine: market data projection rejected event "
+                          << event.event_sequence << ": " << applied.error << '\n';
+                return false;
+            }
+        }
+    }
+
+    int dump_book_command(int argc, char** argv)
+    {
+        if (argc != 3) {
+            print_usage();
+            return 1;
+        }
+
+        projections::MarketDataProjection projection;
+        if (!apply_projection_from_event_wal(projection, argv[2])) {
+            return 1;
+        }
+
+        const auto& book = projection.book();
+        std::cout << "Book instrument=" << book.instrument_id
+                  << " last_event_sequence=" << projection.last_applied_event_sequence() << '\n';
+
+        std::cout << "Bids:\n";
+        if (book.bids.empty()) {
+            std::cout << "  empty\n";
+        } else {
+            for (const auto& level : book.bids) {
+                std::cout << "  " << level.price_ticks << ": " << level.quantity_lots << '\n';
+            }
+        }
+
+        std::cout << "Asks:\n";
+        if (book.asks.empty()) {
+            std::cout << "  empty\n";
+        } else {
+            for (const auto& level : book.asks) {
+                std::cout << "  " << level.price_ticks << ": " << level.quantity_lots << '\n';
+            }
+        }
+
+        return 0;
+    }
+
+    int dump_trades_command(int argc, char** argv)
+    {
+        if (argc != 3) {
+            print_usage();
+            return 1;
+        }
+
+        projections::MarketDataProjection projection;
+        if (!apply_projection_from_event_wal(projection, argv[2])) {
+            return 1;
+        }
+
+        for (const auto& trade : projection.trades()) {
+            std::cout << "trade=" << trade.trade_id
+                      << " instrument=" << trade.instrument_id
+                      << " incoming=" << trade.incoming_order_id
+                      << " resting=" << trade.resting_order_id
+                      << " side=" << side_name(trade.aggressor_side)
+                      << " price=" << trade.price_ticks
+                      << " qty=" << trade.quantity_lots << '\n';
+        }
+
+        return 0;
+    }
 }
 
 int main(int argc, char** argv)
@@ -273,6 +376,12 @@ int main(int argc, char** argv)
     }
     if (command == "dump-events") {
         return dump_events_command(argc, argv);
+    }
+    if (command == "dump-book") {
+        return dump_book_command(argc, argv);
+    }
+    if (command == "dump-trades") {
+        return dump_trades_command(argc, argv);
     }
 
     print_usage();

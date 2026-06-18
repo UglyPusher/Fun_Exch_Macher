@@ -32,6 +32,16 @@ target_link_libraries(matching_engine_core PUBLIC
     matching_engine_wal
 )
 
+add_library(matching_engine_projections
+    src/projections/src/market_data_projection.cpp
+)
+target_include_directories(matching_engine_projections PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/projections/include
+)
+target_link_libraries(matching_engine_projections PUBLIC
+    matching_engine_core
+)
+
 add_executable(matching_engine_app
     src/app/event_dump.cpp
     src/app/main.cpp
@@ -42,6 +52,7 @@ set_target_properties(matching_engine_app PROPERTIES
 )
 target_link_libraries(matching_engine_app PRIVATE
     matching_engine_core
+    matching_engine_projections
 )
 
 add_custom_target(run
@@ -78,10 +89,17 @@ function(add_matching_engine_test target source)
     add_test(NAME ${target} COMMAND ${target})
 endfunction()
 
+function(add_matching_engine_projection_test target source)
+    add_executable(${target} ${source})
+    target_link_libraries(${target} PRIVATE matching_engine_projections)
+    add_test(NAME ${target} COMMAND ${target})
+endfunction()
+
 add_matching_engine_test(order_book_tests tests/order_book_tests.cpp)
 add_matching_engine_test(matching_tests tests/matching_tests.cpp)
 add_matching_engine_test(replay_tests tests/replay_tests.cpp)
 add_matching_engine_test(instrument_engine_wal_pipeline_tests tests/instrument_engine_wal_pipeline_tests.cpp)
+add_matching_engine_projection_test(market_data_projection_tests tests/market_data_projection_tests.cpp)
 
 add_matching_engine_test(wal_record_header_tests tests/wal/wal_record_header_tests.cpp)
 add_matching_engine_test(wal_segment_writer_tests tests/wal/wal_segment_writer_tests.cpp)

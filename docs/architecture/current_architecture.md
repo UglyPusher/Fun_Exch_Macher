@@ -33,6 +33,9 @@ This document describes what is implemented in the current codebase. For the int
         |
         v
 [Committed Event Reader]
+        |
+        v
+[MarketDataProjection]
 ```
 
 The current prototype has the first replayable matcher I/O cycle for `NewOrder`, `CancelOrder`, and `ReplaceOrder`:
@@ -84,18 +87,28 @@ src/core/
   - order book invariant validation
   - deterministic replay validation harness
 
+src/projections/
+  - MarketDataProjection
+  - Execution Event WAL consumer state model
+  - public book depth by price
+  - public trade tape
+  - event sequence gap rejection
+
 src/app/
   - CLI/demo runner
   - scenario loader for line-based command files
   - run command: scenario -> Command WAL -> InstrumentEngine -> Event WAL -> Replay OK
   - replay command: Command WAL + Event WAL -> validation replay
   - dump-events command: Event WAL -> human-readable event stream
+  - dump-book command: Event WAL -> MarketDataProjection -> public book
+  - dump-trades command: Event WAL -> MarketDataProjection -> trade tape
 
 tests/
   - WAL behavior tests
   - in-memory OrderBook NewOrder, CancelOrder, and ReplaceOrder tests
   - Command WAL -> InstrumentEngine -> Event WAL pipeline test
   - deterministic replay validation tests
+  - market data projection tests
 ```
 
 ## Current Build Shape
@@ -107,10 +120,14 @@ matching_engine_domain
 matching_engine_core ---------------> matching_engine_wal
         |
         v
+matching_engine_projections
+        |
+        v
 matching_engine_app
 ```
 
 `matching_engine_core` is now a small library. It links the domain DTO layer and WAL library, contains the `InstrumentEngine`, owns the in-memory `OrderBook`, and contains the replay validation harness.
+`matching_engine_projections` consumes execution events and builds downstream public state without reading Command WAL or running the matcher.
 
 ## Current Instrument Pipeline
 
@@ -246,7 +263,6 @@ Current WAL properties:
 - reservation manager
 - portfolio state projection
 - accounting projection
-- market data projection
 - snapshots
 - persisted committed-offset metadata across process restarts
 - POSIX fsync/fdatasync durability policy
@@ -262,3 +278,24 @@ Command WAL + Matching Rules = Execution Event WAL
 ```
 
 Validation replay reads commands, applies them to a fresh `InstrumentEngine`, regenerates execution events, compares normalized event fields against the stored event stream, checks command sequence continuity, and verifies order book invariants after each command.
+
+## Current Downstream Projection
+
+```text
+Execution Event WAL
+    -> committed event read through typed DTO boundary
+    -> MarketDataProjection.apply(event)
+    -> PublicBookView + TradeTape
+```
+
+`MarketDataProjection` does not replay commands and does not call matcher code. It consumes only `ExecutionEventRecordV1`.
+
+Implemented projection behavior:
+
+```text
+- OrderRested / OrderPartiallyFilled create or update visible order state
+- TradeExecuted records a public trade and reduces the resting contra order
+- OrderCancelled removes visible order state
+- OrderFullyFilled removes an order if it is still visible
+- event sequence gaps are rejected
+```

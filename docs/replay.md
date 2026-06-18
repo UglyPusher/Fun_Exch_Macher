@@ -817,6 +817,20 @@ Execution Event WAL -> Consumer State
 
 Do not mix matcher replay with consumer replay in the first prototype.
 
+Current prototype status:
+
+```text
+Implemented:
+- MarketDataProjection consumes ExecutionEventRecordV1 only
+- public book depth is rebuilt from event stream
+- trade tape is rebuilt from TradeExecuted events
+- consumer projection rejects event sequence gaps
+
+Not implemented:
+- consumer checkpoints
+- market data protocol/feed serialization
+```
+
 ---
 
 ## 24. Replay Test Cases
