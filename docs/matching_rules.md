@@ -557,6 +557,21 @@ A cancelled order must not be matched later.
 
 Cancellation does not generate a trade.
 
+Current prototype status:
+
+```text
+Implemented:
+- existing order cancellation
+- unknown order rejection with UnknownOrderId
+- instrument mismatch rejection with InstrumentMismatch
+- FIFO price-level removal by linear scan
+- empty price-level removal
+- replay coverage for cancel event streams
+
+Not implemented:
+- ownership/client mismatch checks
+```
+
 ---
 
 ## 15. Replace Order Processing
@@ -588,6 +603,12 @@ Replacement processing:
 ```
 
 Do not attempt priority-preserving replace in the first prototype.
+
+Current prototype status:
+
+```text
+ReplaceOrder is not implemented yet.
+```
 
 ---
 

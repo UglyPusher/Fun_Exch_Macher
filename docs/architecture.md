@@ -578,12 +578,13 @@ A test should be able to:
 
 ## 17. Prototype Scope
 
-### Must Have
+### Implemented First Slice
 
 ```text
 One instrument
 Limit buy orders
 Limit sell orders
+Cancel order
 Price/time priority
 Command log
 Execution event log
@@ -594,7 +595,6 @@ Deterministic unit tests
 ### Should Have
 
 ```text
-Cancel order
 Multiple instruments
 One matcher per instrument
 Simple benchmark

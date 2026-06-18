@@ -19,17 +19,19 @@ Implemented now:
 - Binary segment writer/reader/scanner with segment headers, record headers, payload CRC32, sequence validation, and trailing-record detection.
 - Domain storage DTOs for order commands and execution events.
 - In-memory `OrderBook` FSM for `NewOrder`: passive resting, price/time matching, partial fill, full fill, and duplicate rejection.
-- `InstrumentEngine` for `NewOrder` that owns an in-memory `OrderBook`.
+- In-memory `OrderBook` support for `CancelOrder`: existing-order cancellation, unknown-order rejection, instrument mismatch rejection, FIFO price-level removal, and invariant validation.
+- `InstrumentEngine` for `NewOrder` and `CancelOrder` that owns an in-memory `OrderBook`.
+- Deterministic replay validation harness comparing regenerated execution events with stored execution events through normalized event fields.
 - End-to-end instrument pipeline test covering Command WAL -> committed command reader -> InstrumentEngine -> Event WAL -> event reader.
 - WAL-focused tests covering headers, checksum stability, segment write/read, recovery scanning, and typed adapters.
+- Replay tests covering happy paths, event count mismatch, event field mismatch, event order mismatch, extra/missing stored events, command sequence breaks, and cancel replay.
 - A tiny CLI entrypoint that loads `examples/simple_session.txt` as a placeholder app target.
 
 Not implemented yet:
 
-- Real matcher command application.
-- Cancel/replace order handling.
-- Deterministic replay harness comparing generated events with stored event WAL.
+- Replace order handling.
 - Ingress normalizer/router and per-instrument command streams.
+- Risk, reservation, portfolio, accounting, market data, snapshots, fsync/fdatasync durability policy, and multi-segment rotation.
 
 ## Architecture Direction
 
@@ -178,6 +180,9 @@ Current test groups include:
 - Segment reader ordered read and EOF detection.
 - Recovery scanner detection of incomplete trailing records.
 - Typed WAL write/read, record type mismatch, and payload size mismatch.
+- OrderBook matching behavior for passive orders, aggressive fills, duplicate rejection, and cancel behavior.
+- Instrument pipeline behavior through Command WAL, `InstrumentEngine`, Execution Event WAL, and typed event readback.
+- Replay validation of regenerated events against stored event streams.
 
 ## Scope Guard
 
@@ -194,6 +199,7 @@ First meaningful prototype target:
 
 - one instrument;
 - limit buy/sell orders;
+- cancel orders;
 - price/time priority;
 - command WAL;
 - execution event WAL;

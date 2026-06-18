@@ -951,6 +951,26 @@ Replay reports the first mismatch with command sequence and event details.
 Replay does not depend on network, database, or wall-clock time.
 ```
 
+Current prototype status:
+
+```text
+Implemented:
+- validation replay from command reader and stored event reader
+- regenerated event comparison through normalized fields
+- first mismatch diagnostics with failure class, command sequence, event index, expected/actual event, and book snapshots
+- command sequence break detection
+- extra stored event detection
+- missing stored event detection
+- event field and event order mismatch detection
+- order book invariant checks after each replayed command
+- replay tests for NewOrder and CancelOrder paths
+
+Not implemented:
+- checkpoint replay
+- multi-segment rotated replay
+- schema-version adapters
+```
+
 ---
 
 ## 28. Summary
