@@ -33,7 +33,9 @@ target_link_libraries(matching_engine_core PUBLIC
 )
 
 add_executable(matching_engine_app
+    src/app/event_dump.cpp
     src/app/main.cpp
+    src/app/scenario_loader.cpp
 )
 set_target_properties(matching_engine_app PROPERTIES
     OUTPUT_NAME matching_engine
@@ -43,25 +45,25 @@ target_link_libraries(matching_engine_app PRIVATE
 )
 
 add_custom_target(run
-    COMMAND $<TARGET_FILE:matching_engine_app> ${CMAKE_CURRENT_SOURCE_DIR}/examples/simple_session.txt
+    COMMAND $<TARGET_FILE:matching_engine_app> run ${CMAKE_CURRENT_SOURCE_DIR}/examples/simple_session.txt ${CMAKE_CURRENT_BINARY_DIR}/wal/commands.wal ${CMAKE_CURRENT_BINARY_DIR}/wal/events.wal
     DEPENDS matching_engine_app
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     USES_TERMINAL
-    COMMENT "Run matching_engine with examples/simple_session.txt"
+    COMMENT "Run matching_engine demo session"
 )
 
 find_program(MATCHING_ENGINE_GDB gdb)
 if(MATCHING_ENGINE_GDB)
     add_custom_target(debug
-        COMMAND ${MATCHING_ENGINE_GDB} --args $<TARGET_FILE:matching_engine_app> ${CMAKE_CURRENT_SOURCE_DIR}/examples/simple_session.txt
+        COMMAND ${MATCHING_ENGINE_GDB} --args $<TARGET_FILE:matching_engine_app> run ${CMAKE_CURRENT_SOURCE_DIR}/examples/simple_session.txt ${CMAKE_CURRENT_BINARY_DIR}/wal/commands.wal ${CMAKE_CURRENT_BINARY_DIR}/wal/events.wal
         DEPENDS matching_engine_app
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         USES_TERMINAL
-        COMMENT "Debug matching_engine with gdb"
+        COMMENT "Debug matching_engine demo session with gdb"
     )
 else()
     add_custom_target(debug
-        COMMAND ${CMAKE_COMMAND} -E echo "gdb was not found. Install gdb or run: $<TARGET_FILE:matching_engine_app> ${CMAKE_CURRENT_SOURCE_DIR}/examples/simple_session.txt"
+        COMMAND ${CMAKE_COMMAND} -E echo "gdb was not found. Install gdb or run: $<TARGET_FILE:matching_engine_app> run ${CMAKE_CURRENT_SOURCE_DIR}/examples/simple_session.txt ${CMAKE_CURRENT_BINARY_DIR}/wal/commands.wal ${CMAKE_CURRENT_BINARY_DIR}/wal/events.wal"
         DEPENDS matching_engine_app
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         USES_TERMINAL

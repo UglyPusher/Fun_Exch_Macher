@@ -35,3 +35,6 @@ coverage/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Demo WAL output
+wal/

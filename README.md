@@ -26,7 +26,7 @@ Implemented now:
 - End-to-end instrument pipeline test covering Command WAL -> committed command reader -> InstrumentEngine -> Event WAL -> event reader.
 - WAL-focused tests covering headers, checksum stability, segment write/read, recovery scanning, and typed adapters.
 - Replay tests covering happy paths, event count mismatch, event field mismatch, event order mismatch, extra/missing stored events, command sequence breaks, cancel replay, and replace replay.
-- A tiny CLI entrypoint that loads `examples/simple_session.txt` as a placeholder app target.
+- CLI/demo runner with `run`, `replay`, and `dump-events` commands.
 
 Not implemented yet:
 
@@ -115,7 +115,7 @@ Configure, build, and run the test suite.
 cmake --workflow --preset run
 ```
 
-Build and run the placeholder app against `examples/simple_session.txt`.
+Build and run the demo session against `examples/simple_session.txt`.
 
 ```bash
 cmake --workflow --preset debug
@@ -139,6 +139,32 @@ Release build:
 cmake --preset release
 cmake --build --preset release
 ctest --preset release
+```
+
+Run a scenario through Command WAL, `InstrumentEngine`, Execution Event WAL, and validation replay:
+
+```bash
+./build/debug/matching_engine run examples/cancel_replace_session.txt wal/commands.wal wal/events.wal
+```
+
+Replay existing WALs:
+
+```bash
+./build/debug/matching_engine replay wal/commands.wal wal/events.wal
+```
+
+Dump stored execution events:
+
+```bash
+./build/debug/matching_engine dump-events wal/events.wal
+```
+
+Scenario format:
+
+```text
+NEW seq instrument client order side price_ticks quantity_lots GTC
+CANCEL seq instrument client order
+REPLACE seq instrument client old_order new_order side price_ticks quantity_lots GTC
 ```
 
 ## WAL Design Snapshot
@@ -183,6 +209,7 @@ Current test groups include:
 - OrderBook matching behavior for passive orders, aggressive fills, duplicate rejection, cancel behavior, and replace behavior.
 - Instrument pipeline behavior through Command WAL, `InstrumentEngine`, Execution Event WAL, and typed event readback.
 - Replay validation of regenerated events against stored event streams.
+- CLI/demo runner smoke checked through scenario files.
 
 ## Scope Guard
 
@@ -205,5 +232,6 @@ First meaningful prototype target:
 - command WAL;
 - execution event WAL;
 - deterministic replay test;
+- demo runner from scenario file to Replay OK;
 - raw and typed WAL adapters;
 - simple file segment writer/reader.

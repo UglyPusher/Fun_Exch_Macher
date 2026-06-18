@@ -85,7 +85,11 @@ src/core/
   - deterministic replay validation harness
 
 src/app/
-  - placeholder CLI entrypoint
+  - CLI/demo runner
+  - scenario loader for line-based command files
+  - run command: scenario -> Command WAL -> InstrumentEngine -> Event WAL -> Replay OK
+  - replay command: Command WAL + Event WAL -> validation replay
+  - dump-events command: Event WAL -> human-readable event stream
 
 tests/
   - WAL behavior tests

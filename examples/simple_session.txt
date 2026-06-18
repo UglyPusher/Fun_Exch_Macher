@@ -1,5 +1,9 @@
-# Example matching engine session.
-# Format is intentionally left open while the parser is being designed.
+# Simple matching engine session.
+# Format:
+# NEW seq instrument client order side price_ticks quantity_lots GTC
+# CANCEL seq instrument client order
+# REPLACE seq instrument client old_order new_order side price_ticks quantity_lots GTC
 
-ADD order_id=1 side=BUY price=100 quantity=10
-ADD order_id=2 side=SELL price=100 quantity=5
+NEW 1 TEST C1 B1 BUY 10000 10 GTC
+NEW 2 TEST C2 S1 SELL 10100 5 GTC
+NEW 3 TEST C3 B2 BUY 10100 5 GTC
