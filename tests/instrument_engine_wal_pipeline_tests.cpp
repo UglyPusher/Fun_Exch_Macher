@@ -1,5 +1,6 @@
 #include "core/instrument_engine.hpp"
 #include "core/matching_types.hpp"
+#include "core/replay.hpp"
 #include "domain/execution_event_record.hpp"
 #include "domain/order_command_record.hpp"
 #include "domain/record_types.hpp"
@@ -231,11 +232,10 @@ int main()
         return 4;
     }
 
+    const core::EventComparator comparator;
     for (std::size_t index = 0; index < stored_events.size(); ++index) {
         if (stored_events[index].event_sequence != 5001 + index
-            || stored_events[index].event_sequence != generated_events[index].event_sequence
-            || stored_events[index].command_sequence != generated_events[index].command_sequence
-            || stored_events[index].event_type != generated_events[index].event_type) {
+            || !comparator.compare(generated_events[index], stored_events[index]).equal) {
             return 5;
         }
     }

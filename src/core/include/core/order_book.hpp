@@ -9,6 +9,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -27,6 +28,8 @@ namespace core
         [[nodiscard]] std::int64_t best_ask_price() const;
         [[nodiscard]] std::int64_t remaining_quantity(std::uint64_t order_id) const;
         [[nodiscard]] std::size_t active_order_count() const noexcept;
+        [[nodiscard]] bool validate_invariants() const;
+        [[nodiscard]] std::string snapshot() const;
 
     private:
         struct RestingOrder

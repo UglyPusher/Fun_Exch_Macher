@@ -1,6 +1,8 @@
 #include "core/order_book.hpp"
 
 #include <algorithm>
+#include <sstream>
+#include <unordered_set>
 
 namespace core
 {
@@ -120,6 +122,65 @@ namespace core
     std::size_t OrderBook::active_order_count() const noexcept
     {
         return active_orders_.size();
+    }
+
+    bool OrderBook::validate_invariants() const
+    {
+        std::unordered_set<std::uint64_t> queued_order_ids;
+
+        const auto validate_levels = [this, &queued_order_ids](const auto& levels, std::uint16_t side) {
+            for (const auto& [price, orders] : levels) {
+                if (orders.empty() || price <= 0) {
+                    return false;
+                }
+
+                for (const auto& order : orders) {
+                    if (order.side != side
+                        || order.price_ticks != price
+                        || order.remaining_quantity_lots <= 0
+                        || !queued_order_ids.insert(order.order_id).second) {
+                        return false;
+                    }
+
+                    const auto active = active_orders_.find(order.order_id);
+                    if (active == active_orders_.end()
+                        || active->second.client_id != order.client_id
+                        || active->second.instrument_id != order.instrument_id
+                        || active->second.side != order.side
+                        || active->second.price_ticks != order.price_ticks
+                        || active->second.remaining_quantity_lots != order.remaining_quantity_lots) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        };
+
+        if (!validate_levels(bids_, static_cast<std::uint16_t>(Side::Buy))
+            || !validate_levels(asks_, static_cast<std::uint16_t>(Side::Sell))) {
+            return false;
+        }
+
+        if (queued_order_ids.size() != active_orders_.size()) {
+            return false;
+        }
+
+        for (const auto& [order_id, order] : active_orders_) {
+            if (!queued_order_ids.contains(order_id) || order.remaining_quantity_lots <= 0) {
+                return false;
+            }
+        }
+
+        return bids_.empty() || asks_.empty() || bids_.begin()->first < asks_.begin()->first;
+    }
+
+    std::string OrderBook::snapshot() const
+    {
+        std::ostringstream out;
+        out << "active_orders=" << active_orders_.size()
+            << " best_bid=" << best_bid_price()
+            << " best_ask=" << best_ask_price();
+        return out.str();
     }
 
     RejectionReason OrderBook::validate_new_order(const domain::OrderCommandRecordV1& command) const noexcept

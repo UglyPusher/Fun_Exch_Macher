@@ -22,6 +22,7 @@ add_library(matching_engine_core
     src/core/src/dummy_instrument_engine.cpp
     src/core/src/instrument_engine.cpp
     src/core/src/order_book.cpp
+    src/core/src/replay.cpp
 )
 target_include_directories(matching_engine_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/include
