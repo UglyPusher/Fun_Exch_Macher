@@ -63,6 +63,31 @@ namespace
         return command;
     }
 
+    domain::OrderCommandRecordV1 replace_order(
+        std::uint64_t sequence,
+        std::uint64_t old_order_id,
+        std::uint64_t replacement_order_id,
+        std::uint64_t client_id,
+        std::uint16_t side,
+        std::int64_t price_ticks,
+        std::int64_t quantity_lots)
+    {
+        domain::OrderCommandRecordV1 command{};
+        command.command_sequence = sequence;
+        command.source_ingress_epoch = 7;
+        command.source_ingress_sequence = sequence;
+        command.order_id = old_order_id;
+        command.replacement_order_id = replacement_order_id;
+        command.client_id = client_id;
+        command.price_ticks = price_ticks;
+        command.quantity_lots = quantity_lots;
+        command.instrument_id = 77;
+        command.command_type = static_cast<std::uint16_t>(core::CommandType::ReplaceOrder);
+        command.side = side;
+        command.time_in_force = static_cast<std::uint16_t>(core::TimeInForce::Gtc);
+        return command;
+    }
+
     bool has_types(
         const std::vector<domain::ExecutionEventRecordV1>& events,
         std::initializer_list<core::ExecutionEventType> expected)
@@ -229,7 +254,9 @@ int main()
         new_order(1004, 4, static_cast<std::uint16_t>(core::Side::Sell), 990, 8),
         new_order(1005, 4, static_cast<std::uint16_t>(core::Side::Sell), 995, 1),
         new_order(1006, 5, static_cast<std::uint16_t>(core::Side::Buy), 900, 2),
-        cancel_order(1007, 5, 1005)
+        cancel_order(1007, 5, 1005),
+        new_order(1008, 6, static_cast<std::uint16_t>(core::Side::Buy), 910, 2),
+        replace_order(1009, 6, 7, 1006, static_cast<std::uint16_t>(core::Side::Buy), 920, 3)
     };
 
     if (!write_commands(command_wal_path, commands)) {
@@ -237,7 +264,7 @@ int main()
     }
 
     const auto generated_events = run_engine_from_command_wal(command_wal_path);
-    if (generated_events.size() != 14) {
+    if (generated_events.size() != 19) {
         return 2;
     }
 
@@ -309,6 +336,19 @@ int main()
         || cancel_events[0].order_id != 5
         || cancel_events[0].remaining_quantity_lots != 2) {
         return 11;
+    }
+
+    const auto replace_events = events_for_command(stored_events, 1009);
+    if (!has_types(replace_events, {
+            core::ExecutionEventType::OrderCancelled,
+            core::ExecutionEventType::OrderAccepted,
+            core::ExecutionEventType::OrderRested})
+        || !has_command_sequence(replace_events, 1009)
+        || replace_events[0].order_id != 6
+        || replace_events[1].order_id != 7
+        || replace_events[2].order_id != 7
+        || replace_events[2].remaining_quantity_lots != 3) {
+        return 12;
     }
 
     std::filesystem::remove(command_wal_path);

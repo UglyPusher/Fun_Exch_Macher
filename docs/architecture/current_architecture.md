@@ -23,7 +23,7 @@ This document describes what is implemented in the current codebase. For the int
 [InstrumentEngine]
         |
         v
-[OrderBook NewOrder + CancelOrder FSM]
+[OrderBook NewOrder + CancelOrder + ReplaceOrder FSM]
         |
         v
 [Typed Event WAL Writer]
@@ -35,13 +35,13 @@ This document describes what is implemented in the current codebase. For the int
 [Committed Event Reader]
 ```
 
-The current prototype has the first replayable matcher I/O cycle for `NewOrder` and `CancelOrder`:
+The current prototype has the first replayable matcher I/O cycle for `NewOrder`, `CancelOrder`, and `ReplaceOrder`:
 
 ```text
 Command WAL -> InstrumentEngine -> OrderBook mutation -> Execution Event WAL
 ```
 
-This is still intentionally narrow. It proves the WAL boundaries, typed DTO boundaries, commit visibility, command-to-event correlation, in-memory book mutation, and deterministic replay validation for the first two command types.
+This is still intentionally narrow. It proves the WAL boundaries, typed DTO boundaries, commit visibility, command-to-event correlation, in-memory book mutation, and deterministic replay validation for the basic command set.
 
 ## Implemented Now
 
@@ -68,9 +68,9 @@ src/domain/
 src/core/
   - matching enum constants for command, side, TIF, event type, rejection reason
   - DummyInstrumentEngine retained as an earlier scaffold
-  - InstrumentEngine for NewOrder and CancelOrder
+  - InstrumentEngine for NewOrder, CancelOrder, and ReplaceOrder
   - InstrumentEngine owns an in-memory OrderBook
-  - OrderBook FSM for NewOrder and CancelOrder
+  - OrderBook FSM for NewOrder, CancelOrder, and ReplaceOrder
   - passive resting
   - price/time matching against resting liquidity
   - partial fill and full fill event generation
@@ -78,16 +78,18 @@ src/core/
   - existing order cancellation
   - unknown cancel rejection
   - instrument mismatch rejection for cancel
+  - replacement with distinct replacement_order_id
+  - replacement duplicate-new-id rejection
+  - replacement loses FIFO priority by processing as a fresh NewOrder
   - order book invariant validation
   - deterministic replay validation harness
-  - no Replace support yet
 
 src/app/
   - placeholder CLI entrypoint
 
 tests/
   - WAL behavior tests
-  - in-memory OrderBook NewOrder and CancelOrder tests
+  - in-memory OrderBook NewOrder, CancelOrder, and ReplaceOrder tests
   - Command WAL -> InstrumentEngine -> Event WAL pipeline test
   - deterministic replay validation tests
 ```
@@ -114,7 +116,7 @@ OrderCommandRecordV1[]
     -> Command WAL commit ack
     -> committed command read through typed DTO boundary
     -> InstrumentEngine.apply(command)
-    -> OrderBook.apply_new_order(command) / OrderBook.apply_cancel_order(command)
+    -> OrderBook.apply_new_order(command) / OrderBook.apply_cancel_order(command) / OrderBook.apply_replace_order(command)
     -> ExecutionEventRecordV1[]
     -> Event WAL append
     -> Event WAL commit ack
@@ -131,6 +133,8 @@ The pipeline test covers:
 - duplicate order rejection
 - passive order cancellation
 - cancelled order event readback
+- passive order replacement with new order id
+- replacement event readback
 - event sequence continuity
 - command_sequence correlation
 - WAL reader CRC/header/sequence validation on readback
@@ -149,6 +153,14 @@ OrderBook.apply_cancel_order(command)
     -> removes active order from active index and FIFO price level
     -> removes empty price level
     -> emits deterministic events
+
+OrderBook.apply_replace_order(command)
+    -> validates ReplaceOrder
+    -> treats command.order_id as the old order id
+    -> treats command.replacement_order_id as the new order id
+    -> removes old active order from active index and FIFO price level
+    -> emits OrderCancelled for the old order
+    -> applies the replacement as a fresh NewOrder
 ```
 
 Implemented `NewOrder` event sequences:
@@ -175,6 +187,14 @@ Cancel existing order:
   OrderCancelled
 
 Cancel unknown order:
+  OrderRejected
+
+Replace existing order:
+  OrderCancelled
+  OrderAccepted
+  OrderRested / TradeExecuted... / OrderPartiallyFilled / OrderFullyFilled
+
+Replace unknown order:
   OrderRejected
 ```
 
@@ -220,7 +240,6 @@ Current WAL properties:
 - per-instrument command stream ownership
 - risk checks
 - reservation manager
-- Replace support
 - portfolio state projection
 - accounting projection
 - market data projection
@@ -232,7 +251,7 @@ Current WAL properties:
 
 ## Current Source Of Truth
 
-At the current stage, the reliable implemented source-of-truth mechanism is the WAL storage layer plus deterministic `NewOrder` and `CancelOrder` matching rules:
+At the current stage, the reliable implemented source-of-truth mechanism is the WAL storage layer plus deterministic `NewOrder`, `CancelOrder`, and `ReplaceOrder` matching rules:
 
 ```text
 Command WAL + Matching Rules = Execution Event WAL

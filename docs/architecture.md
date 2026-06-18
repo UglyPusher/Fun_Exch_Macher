@@ -585,6 +585,7 @@ One instrument
 Limit buy orders
 Limit sell orders
 Cancel order
+Replace order with a distinct replacement order id
 Price/time priority
 Command log
 Execution event log

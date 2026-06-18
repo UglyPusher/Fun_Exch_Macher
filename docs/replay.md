@@ -963,7 +963,7 @@ Implemented:
 - missing stored event detection
 - event field and event order mismatch detection
 - order book invariant checks after each replayed command
-- replay tests for NewOrder and CancelOrder paths
+- replay tests for NewOrder, CancelOrder, and ReplaceOrder paths
 
 Not implemented:
 - checkpoint replay

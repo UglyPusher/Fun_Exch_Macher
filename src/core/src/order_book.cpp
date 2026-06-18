@@ -124,6 +124,30 @@ namespace core
         return events;
     }
 
+    std::vector<domain::ExecutionEventRecordV1> OrderBook::apply_replace_order(
+        const domain::OrderCommandRecordV1& command)
+    {
+        std::vector<domain::ExecutionEventRecordV1> events;
+
+        const auto rejection_reason = validate_replace_order(command);
+        if (rejection_reason != RejectionReason::None) {
+            events.push_back(make_rejected_event(command, rejection_reason));
+            return events;
+        }
+
+        const auto resting_order = find_order(command.order_id);
+        remove_cancelled_order(*resting_order);
+        events.push_back(make_cancelled_event(command, *resting_order));
+
+        auto replacement = command;
+        replacement.command_type = static_cast<std::uint16_t>(CommandType::NewOrder);
+        replacement.order_id = command.replacement_order_id;
+
+        auto replacement_events = apply_new_order(replacement);
+        events.insert(events.end(), replacement_events.begin(), replacement_events.end());
+        return events;
+    }
+
     bool OrderBook::has_order(std::uint64_t order_id) const
     {
         return active_orders_.contains(order_id);
@@ -229,6 +253,48 @@ namespace core
 
         if (active_orders_.contains(command.order_id)) {
             return RejectionReason::DuplicateOrderId;
+        }
+
+        if (command.time_in_force != static_cast<std::uint16_t>(TimeInForce::Gtc)) {
+            return RejectionReason::UnsupportedTimeInForce;
+        }
+
+        return RejectionReason::None;
+    }
+
+    RejectionReason OrderBook::validate_replace_order(const domain::OrderCommandRecordV1& command) const noexcept
+    {
+        if (command.command_type != static_cast<std::uint16_t>(CommandType::ReplaceOrder)) {
+            return RejectionReason::UnsupportedCommand;
+        }
+
+        const auto resting_order = find_order(command.order_id);
+        if (!resting_order.has_value()) {
+            return RejectionReason::UnknownOrderId;
+        }
+
+        if (resting_order->instrument_id != command.instrument_id) {
+            return RejectionReason::InstrumentMismatch;
+        }
+
+        if (command.replacement_order_id == 0 || command.replacement_order_id == command.order_id) {
+            return RejectionReason::InvalidReplacementOrderId;
+        }
+
+        if (active_orders_.contains(command.replacement_order_id)) {
+            return RejectionReason::ReplaceWouldDuplicateOrderId;
+        }
+
+        if (!is_buy(command.side) && !is_sell(command.side)) {
+            return RejectionReason::InvalidSide;
+        }
+
+        if (command.price_ticks <= 0) {
+            return RejectionReason::InvalidPrice;
+        }
+
+        if (command.quantity_lots <= 0) {
+            return RejectionReason::InvalidQuantity;
         }
 
         if (command.time_in_force != static_cast<std::uint16_t>(TimeInForce::Gtc)) {

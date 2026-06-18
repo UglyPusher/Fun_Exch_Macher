@@ -43,6 +43,8 @@ namespace core
         DuplicateOrderId = 5,
         UnsupportedTimeInForce = 6,
         UnknownOrderId = 7,
-        InstrumentMismatch = 8
+        InstrumentMismatch = 8,
+        ReplaceWouldDuplicateOrderId = 9,
+        InvalidReplacementOrderId = 10
     };
 }

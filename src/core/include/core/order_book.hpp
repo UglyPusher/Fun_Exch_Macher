@@ -24,6 +24,8 @@ namespace core
             const domain::OrderCommandRecordV1& command);
         [[nodiscard]] std::vector<domain::ExecutionEventRecordV1> apply_cancel_order(
             const domain::OrderCommandRecordV1& command);
+        [[nodiscard]] std::vector<domain::ExecutionEventRecordV1> apply_replace_order(
+            const domain::OrderCommandRecordV1& command);
 
         [[nodiscard]] bool has_order(std::uint64_t order_id) const;
         [[nodiscard]] std::int64_t best_bid_price() const;
@@ -48,6 +50,7 @@ namespace core
         using AskLevels = std::map<std::int64_t, std::deque<RestingOrder>>;
 
         [[nodiscard]] RejectionReason validate_new_order(const domain::OrderCommandRecordV1& command) const noexcept;
+        [[nodiscard]] RejectionReason validate_replace_order(const domain::OrderCommandRecordV1& command) const noexcept;
         [[nodiscard]] domain::ExecutionEventRecordV1 make_event(
             const domain::OrderCommandRecordV1& command,
             ExecutionEventType event_type,

@@ -231,6 +231,17 @@ instrument id does not match the active order
 client id does not own the order, if ownership checks are enabled
 ```
 
+The current command DTO uses:
+
+```text
+order_id              old order id to replace
+replacement_order_id  new order id for the replacement
+price_ticks           new price
+quantity_lots         new quantity
+side                  replacement side
+time_in_force         replacement TIF
+```
+
 ---
 
 ## 6.5 NewOrder Event Sequencing
@@ -596,8 +607,8 @@ Replacement processing:
 1. Validate replace command.
 2. If invalid, emit OrderRejected.
 3. Remove old order from the book.
-4. Emit OrderReplaced or OrderCancelled according to event policy.
-5. Process replacement as a new order with new price and quantity.
+4. Emit OrderCancelled for the old order.
+5. Process replacement_order_id as a new order with new price and quantity.
 6. New order receives new FIFO priority.
 7. Verify invariants.
 ```
@@ -607,7 +618,20 @@ Do not attempt priority-preserving replace in the first prototype.
 Current prototype status:
 
 ```text
-ReplaceOrder is not implemented yet.
+Implemented:
+- ReplaceOrder with distinct replacement_order_id
+- unknown old order rejection with UnknownOrderId
+- duplicate replacement id rejection with ReplaceWouldDuplicateOrderId
+- invalid replacement id rejection with InvalidReplacementOrderId
+- instrument mismatch rejection with InstrumentMismatch
+- old order removal from active index and FIFO price level
+- OrderCancelled event for the old order
+- replacement application as fresh NewOrder with new FIFO priority
+- replay coverage for replace event streams
+
+Not implemented:
+- ownership/client mismatch checks
+- priority-preserving replace
 ```
 
 ---

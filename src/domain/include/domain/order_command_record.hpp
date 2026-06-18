@@ -12,6 +12,7 @@ namespace domain
         std::uint64_t source_ingress_sequence = 0;
 
         std::uint64_t order_id = 0;
+        std::uint64_t replacement_order_id = 0;
         std::uint64_t client_id = 0;
 
         std::int64_t price_ticks = 0;

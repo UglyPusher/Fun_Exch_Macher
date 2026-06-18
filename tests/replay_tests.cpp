@@ -92,6 +92,31 @@ namespace
         return command;
     }
 
+    domain::OrderCommandRecordV1 replace_order(
+        std::uint64_t sequence,
+        std::uint64_t old_order_id,
+        std::uint64_t replacement_order_id,
+        std::uint64_t client_id,
+        core::Side side,
+        std::int64_t price_ticks,
+        std::int64_t quantity_lots)
+    {
+        domain::OrderCommandRecordV1 command{};
+        command.command_sequence = sequence;
+        command.source_ingress_epoch = 3;
+        command.source_ingress_sequence = sequence;
+        command.order_id = old_order_id;
+        command.replacement_order_id = replacement_order_id;
+        command.client_id = client_id;
+        command.price_ticks = price_ticks;
+        command.quantity_lots = quantity_lots;
+        command.instrument_id = 77;
+        command.command_type = static_cast<std::uint16_t>(core::CommandType::ReplaceOrder);
+        command.side = static_cast<std::uint16_t>(side);
+        command.time_in_force = static_cast<std::uint16_t>(core::TimeInForce::Gtc);
+        return command;
+    }
+
     std::vector<domain::ExecutionEventRecordV1> generate_events(
         const std::vector<domain::OrderCommandRecordV1>& commands)
     {
@@ -269,6 +294,36 @@ namespace
             && events.size() == 5
             && events[4].event_type == static_cast<std::uint16_t>(core::ExecutionEventType::OrderRested);
     }
+
+    bool Replay_replace_existing_ok()
+    {
+        return replay_ok({
+            new_order(1, 1, core::Side::Buy, 1000, 5),
+            replace_order(2, 1, 2, 1001, core::Side::Buy, 1010, 7)
+        });
+    }
+
+    bool Replay_replace_unknown_ok()
+    {
+        return replay_ok({
+            replace_order(1, 1, 2, 1001, core::Side::Buy, 1010, 7)
+        });
+    }
+
+    bool Replay_replace_then_aggressive_order_matches_replacement()
+    {
+        const std::vector commands{
+            new_order(1, 1, core::Side::Buy, 1000, 5),
+            replace_order(2, 1, 2, 1001, core::Side::Buy, 1010, 5),
+            new_order(3, 3, core::Side::Sell, 1010, 5)
+        };
+        const auto events = generate_events(commands);
+        const auto result = replay(commands, events);
+        return result.ok
+            && events.size() == 8
+            && events[6].event_type == static_cast<std::uint16_t>(core::ExecutionEventType::TradeExecuted)
+            && events[6].contra_order_id == 2;
+    }
 }
 
 int main()
@@ -314,6 +369,15 @@ int main()
     }
     if (!Replay_cancel_then_aggressive_order_does_not_match_cancelled_order()) {
         return 14;
+    }
+    if (!Replay_replace_existing_ok()) {
+        return 15;
+    }
+    if (!Replay_replace_unknown_ok()) {
+        return 16;
+    }
+    if (!Replay_replace_then_aggressive_order_matches_replacement()) {
+        return 17;
     }
 
     return 0;
