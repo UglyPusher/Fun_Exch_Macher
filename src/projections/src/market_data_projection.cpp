@@ -1,6 +1,9 @@
+// Applies execution events into a public market-data view.
+// Projection owns no matching decisions and depends only on domain event contracts.
+
 #include "projections/market_data_projection.hpp"
 
-#include "core/matching_types.hpp"
+#include "domain/matching_types.hpp"
 
 #include <algorithm>
 #include <map>
@@ -12,12 +15,12 @@ namespace projections
     {
         bool is_buy(std::uint16_t side) noexcept
         {
-            return side == static_cast<std::uint16_t>(core::Side::Buy);
+            return side == static_cast<std::uint16_t>(domain::Side::Buy);
         }
 
         bool is_sell(std::uint16_t side) noexcept
         {
-            return side == static_cast<std::uint16_t>(core::Side::Sell);
+            return side == static_cast<std::uint16_t>(domain::Side::Sell);
         }
 
         ProjectionApplyResult applied()
@@ -35,16 +38,6 @@ namespace projections
             return {.status = ProjectionApplyStatus::Rejected, .error = std::move(error)};
         }
 
-        std::uint16_t opposite_side(std::uint16_t aggressor_side) noexcept
-        {
-            if (is_buy(aggressor_side)) {
-                return static_cast<std::uint16_t>(core::Side::Sell);
-            }
-            if (is_sell(aggressor_side)) {
-                return static_cast<std::uint16_t>(core::Side::Buy);
-            }
-            return 0;
-        }
     }
 
     ProjectionApplyResult MarketDataProjection::apply(const domain::ExecutionEventRecordV1& event)
@@ -56,34 +49,34 @@ namespace projections
             return rejected(out.str());
         }
 
-        ProjectionApplyResult result{};
-        switch (static_cast<core::ExecutionEventType>(event.event_type)) {
-        case core::ExecutionEventType::OrderAccepted:
-        case core::ExecutionEventType::OrderRejected:
-            result = ignored();
+        ProjectionApplyResult projection_apply_result{};
+        switch (static_cast<domain::ExecutionEventType>(event.event_type)) {
+        case domain::ExecutionEventType::OrderAccepted:
+        case domain::ExecutionEventType::OrderRejected:
+            projection_apply_result = ignored();
             break;
-        case core::ExecutionEventType::OrderRested:
-        case core::ExecutionEventType::OrderPartiallyFilled:
-            result = apply_rested(event);
+        case domain::ExecutionEventType::OrderRested:
+        case domain::ExecutionEventType::OrderPartiallyFilled:
+            projection_apply_result = apply_rested(event);
             break;
-        case core::ExecutionEventType::TradeExecuted:
-            result = apply_trade(event);
+        case domain::ExecutionEventType::TradeExecuted:
+            projection_apply_result = apply_trade(event);
             break;
-        case core::ExecutionEventType::OrderFullyFilled:
-            result = apply_filled(event);
+        case domain::ExecutionEventType::OrderFullyFilled:
+            projection_apply_result = apply_filled(event);
             break;
-        case core::ExecutionEventType::OrderCancelled:
-            result = apply_cancelled(event);
+        case domain::ExecutionEventType::OrderCancelled:
+            projection_apply_result = apply_cancelled(event);
             break;
         default:
-            result = rejected("unknown execution event type");
+            projection_apply_result = rejected("unknown execution event type");
             break;
         }
 
-        if (result.status != ProjectionApplyStatus::Rejected) {
+        if (projection_apply_result.status != ProjectionApplyStatus::Rejected) {
             last_applied_event_sequence_ = event.event_sequence;
         }
-        return result;
+        return projection_apply_result;
     }
 
     const PublicBookView& MarketDataProjection::book() const noexcept
@@ -121,12 +114,12 @@ namespace projections
             return rejected("trade event is missing quantity or resting order id");
         }
 
-        const auto found = active_orders_.find(event.contra_order_id);
-        if (found == active_orders_.end()) {
+        const auto resting_order_position = active_orders_.find(event.contra_order_id);
+        if (resting_order_position == active_orders_.end()) {
             return rejected("trade references unknown resting order");
         }
 
-        if (found->second.remaining_quantity_lots < event.quantity_lots) {
+        if (resting_order_position->second.remaining_quantity_lots < event.quantity_lots) {
             return rejected("trade quantity exceeds projected resting quantity");
         }
 
@@ -140,9 +133,9 @@ namespace projections
             .quantity_lots = event.quantity_lots
         });
 
-        found->second.remaining_quantity_lots -= event.quantity_lots;
-        if (found->second.remaining_quantity_lots == 0) {
-            active_orders_.erase(found);
+        resting_order_position->second.remaining_quantity_lots -= event.quantity_lots;
+        if (resting_order_position->second.remaining_quantity_lots == 0) {
+            active_orders_.erase(resting_order_position);
         }
 
         rebuild_book();
@@ -151,8 +144,8 @@ namespace projections
 
     ProjectionApplyResult MarketDataProjection::apply_cancelled(const domain::ExecutionEventRecordV1& event)
     {
-        const auto found = active_orders_.find(event.order_id);
-        if (found == active_orders_.end()) {
+        const auto cancelled_order_position = active_orders_.find(event.order_id);
+        if (cancelled_order_position == active_orders_.end()) {
             return rejected("cancel references unknown resting order");
         }
 
@@ -161,8 +154,8 @@ namespace projections
 
     ProjectionApplyResult MarketDataProjection::apply_filled(const domain::ExecutionEventRecordV1& event)
     {
-        const auto found = active_orders_.find(event.order_id);
-        if (found == active_orders_.end()) {
+        const auto filled_order_position = active_orders_.find(event.order_id);
+        if (filled_order_position == active_orders_.end()) {
             return ignored();
         }
 
@@ -203,12 +196,13 @@ namespace projections
         std::map<std::int64_t, std::int64_t> asks;
         book_.instrument_id = 0;
 
-        for (const auto& [_, order] : active_orders_) {
-            book_.instrument_id = order.instrument_id;
-            if (is_buy(order.side)) {
-                bids[order.price_ticks] += order.remaining_quantity_lots;
-            } else if (is_sell(order.side)) {
-                asks[order.price_ticks] += order.remaining_quantity_lots;
+        for (const auto& [active_order_id, active_order] : active_orders_) {
+            (void)active_order_id;
+            book_.instrument_id = active_order.instrument_id;
+            if (is_buy(active_order.side)) {
+                bids[active_order.price_ticks] += active_order.remaining_quantity_lots;
+            } else if (is_sell(active_order.side)) {
+                asks[active_order.price_ticks] += active_order.remaining_quantity_lots;
             }
         }
 

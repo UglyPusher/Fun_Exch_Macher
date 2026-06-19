@@ -1,5 +1,9 @@
 #pragma once
 
+// Defines the deterministic in-memory order book used by InstrumentEngine.
+// This module owns price-time priority, active order indexing, and event emission.
+// It must not perform I/O and must not mix orders from different instruments.
+
 #include "core/matching_types.hpp"
 #include "domain/execution_event_record.hpp"
 #include "domain/order_command_record.hpp"
@@ -11,6 +15,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace core
@@ -49,23 +54,64 @@ namespace core
         using BidLevels = std::map<std::int64_t, std::deque<RestingOrder>, std::greater<>>;
         using AskLevels = std::map<std::int64_t, std::deque<RestingOrder>>;
 
+        struct NewOrderExecution
+        {
+            struct TradeExecutionStep
+            {
+                std::uint64_t resting_order_id = 0;
+                std::int64_t trade_price_ticks = 0;
+                std::int64_t trade_quantity_lots = 0;
+                std::int64_t incoming_remaining_quantity_lots = 0;
+            };
+
+            std::vector<TradeExecutionStep> trade_steps;
+            std::int64_t remaining_quantity_lots = 0;
+            bool has_trade = false;
+        };
+
+        [[nodiscard]] CommandType decode_command_type(const domain::OrderCommandRecordV1& command) const noexcept;
+        [[nodiscard]] Side decode_side(std::uint16_t side) const noexcept;
+        [[nodiscard]] TimeInForce decode_time_in_force(const domain::OrderCommandRecordV1& command) const noexcept;
+
         [[nodiscard]] RejectionReason validate_new_order(const domain::OrderCommandRecordV1& command) const noexcept;
         [[nodiscard]] RejectionReason validate_replace_order(const domain::OrderCommandRecordV1& command) const noexcept;
-        [[nodiscard]] domain::ExecutionEventRecordV1 make_event(
+        [[nodiscard]] RejectionReason validate_order_book_instrument(
+            const domain::OrderCommandRecordV1& command) const noexcept;
+
+        void bind_instrument_if_needed(std::uint32_t instrument_id) noexcept;
+
+        [[nodiscard]] NewOrderExecution execute_new_order_against_opposite_book(
+            const domain::OrderCommandRecordV1& command);
+        [[nodiscard]] NewOrderExecution calculate_buy_order_execution_against_asks(
+            const domain::OrderCommandRecordV1& command);
+        [[nodiscard]] NewOrderExecution calculate_sell_order_execution_against_bids(
+            const domain::OrderCommandRecordV1& command);
+
+        void apply_trade_step_to_resting_order(
+            const NewOrderExecution::TradeExecutionStep& trade_step);
+        void apply_trade_to_resting_order_state(
+            RestingOrder& resting_order,
+            std::int64_t trade_quantity_lots);
+        [[nodiscard]] std::optional<RestingOrder> find_mutable_order(
+            std::uint64_t order_id);
+        [[nodiscard]] std::optional<std::reference_wrapper<RestingOrder>> find_resting_order_in_book(
+            std::uint64_t order_id);
+
+        [[nodiscard]] domain::ExecutionEventRecordV1 build_event_and_advance_event_sequence(
             const domain::OrderCommandRecordV1& command,
             ExecutionEventType event_type,
             std::int64_t quantity_lots,
             std::int64_t remaining_quantity_lots) noexcept;
-        [[nodiscard]] domain::ExecutionEventRecordV1 make_trade_event(
+        [[nodiscard]] domain::ExecutionEventRecordV1 build_trade_event_and_advance_sequences(
             const domain::OrderCommandRecordV1& command,
             const RestingOrder& resting_order,
             std::int64_t trade_price_ticks,
             std::int64_t trade_quantity_lots,
             std::int64_t incoming_remaining_lots) noexcept;
-        [[nodiscard]] domain::ExecutionEventRecordV1 make_rejected_event(
+        [[nodiscard]] domain::ExecutionEventRecordV1 build_rejected_event(
             const domain::OrderCommandRecordV1& command,
             RejectionReason reason) noexcept;
-        [[nodiscard]] domain::ExecutionEventRecordV1 make_cancelled_event(
+        [[nodiscard]] domain::ExecutionEventRecordV1 build_cancelled_event(
             const domain::OrderCommandRecordV1& command,
             const RestingOrder& resting_order) noexcept;
 
@@ -73,6 +119,23 @@ namespace core
         void remove_resting_order(const RestingOrder& resting_order);
         void remove_cancelled_order(const RestingOrder& resting_order);
         [[nodiscard]] std::optional<RestingOrder> find_order(std::uint64_t order_id) const;
+        [[nodiscard]] bool validate_bid_levels(std::unordered_set<std::uint64_t>& queued_order_ids) const;
+        [[nodiscard]] bool validate_ask_levels(std::unordered_set<std::uint64_t>& queued_order_ids) const;
+        [[nodiscard]] bool validate_price_levels_against_active_orders(
+            const BidLevels& price_levels,
+            Side expected_side,
+            std::unordered_set<std::uint64_t>& queued_order_ids) const;
+        [[nodiscard]] bool validate_price_levels_against_active_orders(
+            const AskLevels& price_levels,
+            Side expected_side,
+            std::unordered_set<std::uint64_t>& queued_order_ids) const;
+        [[nodiscard]] bool validate_resting_order_against_active_index(
+            const RestingOrder& resting_order,
+            std::int64_t price_ticks,
+            Side expected_side,
+            std::unordered_set<std::uint64_t>& queued_order_ids) const;
+        [[nodiscard]] bool validate_active_orders_are_queued(
+            const std::unordered_set<std::uint64_t>& queued_order_ids) const;
 
         template <typename TLevels>
         void remove_empty_best_level(TLevels& levels)
@@ -83,6 +146,7 @@ namespace core
         }
 
     private:
+        std::optional<std::uint32_t> instrument_id_;
         std::uint64_t next_event_sequence_ = 1;
         std::uint64_t next_trade_id_ = 1;
         BidLevels bids_;

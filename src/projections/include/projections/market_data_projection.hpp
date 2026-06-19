@@ -10,12 +10,20 @@
 
 namespace projections
 {
+    // PublicPriceLevel is an aggregated visible quantity at one price.
+    // Owns: public price and visible quantity fields.
+    // Does not own: order priority or individual resting order identity.
+    // Invariant: quantity_lots is positive when the level is present in a book view.
     struct PublicPriceLevel
     {
         std::int64_t price_ticks = 0;
         std::int64_t quantity_lots = 0;
     };
 
+    // PublicBookView is the market-data projection of active visible liquidity.
+    // Owns: aggregated bid and ask levels for one event stream.
+    // Does not own: matching decisions, replay comparison, or WAL reading.
+    // Invariant: bids are descending by price and asks are ascending by price.
     struct PublicBookView
     {
         std::uint32_t instrument_id = 0;
@@ -23,6 +31,10 @@ namespace projections
         std::vector<PublicPriceLevel> asks;
     };
 
+    // PublicTrade is the projected public representation of a TradeExecuted event.
+    // Owns: identifiers and printable trade fields copied from execution events.
+    // Does not own: trade id allocation or price-time priority rules.
+    // Invariant: quantity_lots is positive for every stored trade.
     struct PublicTrade
     {
         std::uint64_t trade_id = 0;
@@ -47,6 +59,10 @@ namespace projections
         std::string error;
     };
 
+    // MarketDataProjection reduces execution events into public book and trade views.
+    // Owns: projected active orders, aggregated book levels, and public trades.
+    // Does not own: command validation, order matching, replay, or WAL I/O.
+    // Invariant: events are applied in contiguous event_sequence order.
     class MarketDataProjection
     {
     public:

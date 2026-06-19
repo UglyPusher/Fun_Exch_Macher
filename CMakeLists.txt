@@ -39,7 +39,7 @@ target_include_directories(matching_engine_projections PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/projections/include
 )
 target_link_libraries(matching_engine_projections PUBLIC
-    matching_engine_core
+    matching_engine_domain
 )
 
 add_executable(matching_engine_app
@@ -100,6 +100,7 @@ add_matching_engine_test(matching_tests tests/matching_tests.cpp)
 add_matching_engine_test(replay_tests tests/replay_tests.cpp)
 add_matching_engine_test(instrument_engine_wal_pipeline_tests tests/instrument_engine_wal_pipeline_tests.cpp)
 add_matching_engine_projection_test(market_data_projection_tests tests/market_data_projection_tests.cpp)
+target_link_libraries(market_data_projection_tests PRIVATE matching_engine_core matching_engine_wal)
 
 add_matching_engine_test(wal_record_header_tests tests/wal/wal_record_header_tests.cpp)
 add_matching_engine_test(wal_segment_writer_tests tests/wal/wal_segment_writer_tests.cpp)
