@@ -12,8 +12,6 @@ namespace core
 {
     namespace
     {
-        constexpr std::uint16_t invalid_enum_value = 0;
-
         bool is_buy(Side side) noexcept
         {
             return side == Side::Buy;
@@ -42,38 +40,28 @@ namespace core
 
         const auto rejection_reason = validate_new_order(command);
         if (rejection_reason != RejectionReason::None) {
-            events.push_back(build_rejected_event(command, rejection_reason));
+            events.push_back(emit_rejection_event(command, rejection_reason));
             return events;
         }
 
         bind_instrument_if_needed(command.instrument_id);
 
-        events.push_back(build_event_and_advance_event_sequence(
+        events.push_back(emit_order_event(
             command,
             ExecutionEventType::OrderAccepted,
             command.quantity_lots,
             command.quantity_lots));
 
-        NewOrderExecution execution = execute_new_order_against_opposite_book(command);
-        for (const NewOrderExecution::TradeExecutionStep& trade_step : execution.trade_steps) {
-            apply_trade_step_to_resting_order(trade_step);
-            const std::optional<RestingOrder> resting_order_after_trade = find_order(trade_step.resting_order_id);
-            if (resting_order_after_trade.has_value()) {
-                events.push_back(build_trade_event_and_advance_sequences(
-                    command,
-                    *resting_order_after_trade,
-                    trade_step.trade_price_ticks,
-                    trade_step.trade_quantity_lots,
-                    trade_step.incoming_remaining_quantity_lots));
-
-                if (resting_order_after_trade->remaining_quantity_lots == 0) {
-                    remove_cancelled_order(*resting_order_after_trade);
-                }
-            }
+        std::int64_t incoming_remaining_quantity_lots = command.quantity_lots;
+        const std::optional<Side> command_side = decode_side(command.side);
+        if (command_side == Side::Buy) {
+            incoming_remaining_quantity_lots = match_buy_order_against_asks(command, events);
+        } else {
+            incoming_remaining_quantity_lots = match_sell_order_against_bids(command, events);
         }
 
-        if (execution.remaining_quantity_lots == 0) {
-            events.push_back(build_event_and_advance_event_sequence(
+        if (incoming_remaining_quantity_lots == 0) {
+            events.push_back(emit_order_event(
                 command,
                 ExecutionEventType::OrderFullyFilled,
                 command.quantity_lots,
@@ -81,12 +69,13 @@ namespace core
             return events;
         }
 
-        rest_order(command, execution.remaining_quantity_lots);
-        events.push_back(build_event_and_advance_event_sequence(
+        rest_order(command, incoming_remaining_quantity_lots);
+        const bool has_trade = incoming_remaining_quantity_lots != command.quantity_lots;
+        events.push_back(emit_order_event(
             command,
-            execution.has_trade ? ExecutionEventType::OrderPartiallyFilled : ExecutionEventType::OrderRested,
-            command.quantity_lots - execution.remaining_quantity_lots,
-            execution.remaining_quantity_lots));
+            has_trade ? ExecutionEventType::OrderPartiallyFilled : ExecutionEventType::OrderRested,
+            command.quantity_lots - incoming_remaining_quantity_lots,
+            incoming_remaining_quantity_lots));
         return events;
     }
 
@@ -96,23 +85,23 @@ namespace core
         std::vector<domain::ExecutionEventRecordV1> events;
 
         if (decode_command_type(command) != CommandType::CancelOrder) {
-            events.push_back(build_rejected_event(command, RejectionReason::UnsupportedCommand));
+            events.push_back(emit_rejection_event(command, RejectionReason::UnsupportedCommand));
             return events;
         }
 
         const auto resting_order = find_order(command.order_id);
         if (!resting_order.has_value()) {
-            events.push_back(build_rejected_event(command, RejectionReason::UnknownOrderId));
+            events.push_back(emit_rejection_event(command, RejectionReason::UnknownOrderId));
             return events;
         }
 
         if (resting_order->instrument_id != command.instrument_id) {
-            events.push_back(build_rejected_event(command, RejectionReason::InstrumentMismatch));
+            events.push_back(emit_rejection_event(command, RejectionReason::InstrumentMismatch));
             return events;
         }
 
         remove_cancelled_order(*resting_order);
-        events.push_back(build_cancelled_event(command, *resting_order));
+        events.push_back(emit_cancel_event(command, *resting_order));
         return events;
     }
 
@@ -123,13 +112,13 @@ namespace core
 
         const auto rejection_reason = validate_replace_order(command);
         if (rejection_reason != RejectionReason::None) {
-            events.push_back(build_rejected_event(command, rejection_reason));
+            events.push_back(emit_rejection_event(command, rejection_reason));
             return events;
         }
 
         const auto resting_order = find_order(command.order_id);
         remove_cancelled_order(*resting_order);
-        events.push_back(build_cancelled_event(command, *resting_order));
+        events.push_back(emit_cancel_event(command, *resting_order));
 
         domain::OrderCommandRecordV1 replacement_new_order_command = command;
         replacement_new_order_command.command_type = encode_command_type(CommandType::NewOrder);
@@ -138,6 +127,12 @@ namespace core
         std::vector<domain::ExecutionEventRecordV1> replacement_events = apply_new_order(replacement_new_order_command);
         events.insert(events.end(), replacement_events.begin(), replacement_events.end());
         return events;
+    }
+
+    std::vector<domain::ExecutionEventRecordV1> OrderBook::reject_unsupported_command(
+        const domain::OrderCommandRecordV1& command)
+    {
+        return {emit_rejection_event(command, RejectionReason::UnsupportedCommand)};
     }
 
     bool OrderBook::has_order(std::uint64_t order_id) const
@@ -196,8 +191,8 @@ namespace core
             return RejectionReason::UnsupportedCommand;
         }
 
-        const Side command_side = decode_side(command.side);
-        if (!is_buy(command_side) && !is_sell(command_side)) {
+        const std::optional<Side> command_side = decode_side(command.side);
+        if (!command_side.has_value() || (!is_buy(*command_side) && !is_sell(*command_side))) {
             return RejectionReason::InvalidSide;
         }
 
@@ -248,8 +243,8 @@ namespace core
             return RejectionReason::ReplaceWouldDuplicateOrderId;
         }
 
-        const Side command_side = decode_side(command.side);
-        if (!is_buy(command_side) && !is_sell(command_side)) {
+        const std::optional<Side> command_side = decode_side(command.side);
+        if (!command_side.has_value() || (!is_buy(*command_side) && !is_sell(*command_side))) {
             return RejectionReason::InvalidSide;
         }
 
@@ -268,7 +263,8 @@ namespace core
         return RejectionReason::None;
     }
 
-    CommandType OrderBook::decode_command_type(const domain::OrderCommandRecordV1& command) const noexcept
+    std::optional<CommandType> OrderBook::decode_command_type(
+        const domain::OrderCommandRecordV1& command) const noexcept
     {
         switch (static_cast<CommandType>(command.command_type)) {
         case CommandType::NewOrder:
@@ -276,28 +272,29 @@ namespace core
         case CommandType::ReplaceOrder:
             return static_cast<CommandType>(command.command_type);
         default:
-            return static_cast<CommandType>(invalid_enum_value);
+            return std::nullopt;
         }
     }
 
-    Side OrderBook::decode_side(std::uint16_t side) const noexcept
+    std::optional<Side> OrderBook::decode_side(std::uint16_t side) const noexcept
     {
         switch (static_cast<Side>(side)) {
         case Side::Buy:
         case Side::Sell:
             return static_cast<Side>(side);
         default:
-            return static_cast<Side>(invalid_enum_value);
+            return std::nullopt;
         }
     }
 
-    TimeInForce OrderBook::decode_time_in_force(const domain::OrderCommandRecordV1& command) const noexcept
+    std::optional<TimeInForce> OrderBook::decode_time_in_force(
+        const domain::OrderCommandRecordV1& command) const noexcept
     {
         switch (static_cast<TimeInForce>(command.time_in_force)) {
         case TimeInForce::Gtc:
             return TimeInForce::Gtc;
         default:
-            return static_cast<TimeInForce>(invalid_enum_value);
+            return std::nullopt;
         }
     }
 
@@ -318,162 +315,97 @@ namespace core
         }
     }
 
-    OrderBook::NewOrderExecution OrderBook::execute_new_order_against_opposite_book(
-        const domain::OrderCommandRecordV1& command)
+    std::int64_t OrderBook::match_buy_order_against_asks(
+        const domain::OrderCommandRecordV1& command,
+        std::vector<domain::ExecutionEventRecordV1>& events)
     {
-        if (is_buy(decode_side(command.side))) {
-            return calculate_buy_order_execution_against_asks(command);
-        }
+        std::int64_t incoming_remaining_quantity_lots = command.quantity_lots;
 
-        return calculate_sell_order_execution_against_bids(command);
-    }
-
-    OrderBook::NewOrderExecution OrderBook::calculate_buy_order_execution_against_asks(
-        const domain::OrderCommandRecordV1& command)
-    {
-        NewOrderExecution execution{
-            .remaining_quantity_lots = command.quantity_lots
-        };
-
-        for (const auto& [ask_price_ticks, resting_orders] : asks_) {
-            if (execution.remaining_quantity_lots == 0) {
+        while (incoming_remaining_quantity_lots > 0 && !asks_.empty()) {
+            auto best_ask_level_position = asks_.begin();
+            const std::int64_t best_ask_price_ticks = best_ask_level_position->first;
+            if (command.price_ticks < best_ask_price_ticks) {
                 break;
             }
 
-            if (command.price_ticks < ask_price_ticks) {
-                break;
-            }
-
-            for (const RestingOrder& resting_order : resting_orders) {
-                if (execution.remaining_quantity_lots == 0) {
-                    break;
-                }
-
+            auto& resting_orders = best_ask_level_position->second;
+            while (incoming_remaining_quantity_lots > 0 && !resting_orders.empty()) {
+                RestingOrder& resting_order = resting_orders.front();
                 const auto trade_quantity_lots = std::min(
-                    execution.remaining_quantity_lots,
+                    incoming_remaining_quantity_lots,
                     resting_order.remaining_quantity_lots);
 
-                execution.remaining_quantity_lots -= trade_quantity_lots;
-                execution.has_trade = true;
-                execution.trade_steps.push_back(NewOrderExecution::TradeExecutionStep{
-                    .resting_order_id = resting_order.order_id,
-                    .trade_price_ticks = ask_price_ticks,
-                    .trade_quantity_lots = trade_quantity_lots,
-                    .incoming_remaining_quantity_lots = execution.remaining_quantity_lots
-                });
+                incoming_remaining_quantity_lots -= trade_quantity_lots;
+                resting_order.remaining_quantity_lots -= trade_quantity_lots;
+                active_orders_[resting_order.order_id] = resting_order;
+
+                events.push_back(emit_trade_event(
+                    command,
+                    resting_order,
+                    best_ask_price_ticks,
+                    trade_quantity_lots,
+                    incoming_remaining_quantity_lots));
+
+                if (resting_order.remaining_quantity_lots == 0) {
+                    active_orders_.erase(resting_order.order_id);
+                    resting_orders.pop_front();
+                }
+            }
+
+            if (resting_orders.empty()) {
+                asks_.erase(best_ask_level_position);
             }
         }
 
-        return execution;
+        return incoming_remaining_quantity_lots;
     }
 
-    OrderBook::NewOrderExecution OrderBook::calculate_sell_order_execution_against_bids(
-        const domain::OrderCommandRecordV1& command)
+    std::int64_t OrderBook::match_sell_order_against_bids(
+        const domain::OrderCommandRecordV1& command,
+        std::vector<domain::ExecutionEventRecordV1>& events)
     {
-        NewOrderExecution execution{
-            .remaining_quantity_lots = command.quantity_lots
-        };
+        std::int64_t incoming_remaining_quantity_lots = command.quantity_lots;
 
-        for (const auto& [bid_price_ticks, resting_orders] : bids_) {
-            if (execution.remaining_quantity_lots == 0) {
+        while (incoming_remaining_quantity_lots > 0 && !bids_.empty()) {
+            auto best_bid_level_position = bids_.begin();
+            const std::int64_t best_bid_price_ticks = best_bid_level_position->first;
+            if (command.price_ticks > best_bid_price_ticks) {
                 break;
             }
 
-            if (command.price_ticks > bid_price_ticks) {
-                break;
-            }
-
-            for (const RestingOrder& resting_order : resting_orders) {
-                if (execution.remaining_quantity_lots == 0) {
-                    break;
-                }
-
+            auto& resting_orders = best_bid_level_position->second;
+            while (incoming_remaining_quantity_lots > 0 && !resting_orders.empty()) {
+                RestingOrder& resting_order = resting_orders.front();
                 const auto trade_quantity_lots = std::min(
-                    execution.remaining_quantity_lots,
+                    incoming_remaining_quantity_lots,
                     resting_order.remaining_quantity_lots);
 
-                execution.remaining_quantity_lots -= trade_quantity_lots;
-                execution.has_trade = true;
-                execution.trade_steps.push_back(NewOrderExecution::TradeExecutionStep{
-                    .resting_order_id = resting_order.order_id,
-                    .trade_price_ticks = bid_price_ticks,
-                    .trade_quantity_lots = trade_quantity_lots,
-                    .incoming_remaining_quantity_lots = execution.remaining_quantity_lots
-                });
-            }
-        }
+                incoming_remaining_quantity_lots -= trade_quantity_lots;
+                resting_order.remaining_quantity_lots -= trade_quantity_lots;
+                active_orders_[resting_order.order_id] = resting_order;
 
-        return execution;
-    }
+                events.push_back(emit_trade_event(
+                    command,
+                    resting_order,
+                    best_bid_price_ticks,
+                    trade_quantity_lots,
+                    incoming_remaining_quantity_lots));
 
-    void OrderBook::apply_trade_step_to_resting_order(
-        const NewOrderExecution::TradeExecutionStep& trade_step)
-    {
-        const std::optional<std::reference_wrapper<RestingOrder>> resting_order =
-            find_resting_order_in_book(trade_step.resting_order_id);
-        if (!resting_order.has_value()) {
-            return;
-        }
-
-        apply_trade_to_resting_order_state(resting_order->get(), trade_step.trade_quantity_lots);
-    }
-
-    void OrderBook::apply_trade_to_resting_order_state(
-        RestingOrder& resting_order,
-        std::int64_t trade_quantity_lots)
-    {
-        resting_order.remaining_quantity_lots -= trade_quantity_lots;
-        active_orders_[resting_order.order_id] = resting_order;
-    }
-
-    std::optional<OrderBook::RestingOrder> OrderBook::find_mutable_order(
-        std::uint64_t order_id)
-    {
-        const std::optional<std::reference_wrapper<RestingOrder>> resting_order =
-            find_resting_order_in_book(order_id);
-        if (!resting_order.has_value()) {
-            return std::nullopt;
-        }
-
-        return resting_order->get();
-    }
-
-    std::optional<std::reference_wrapper<OrderBook::RestingOrder>> OrderBook::find_resting_order_in_book(
-        std::uint64_t order_id)
-    {
-        const auto active_order_position = active_orders_.find(order_id);
-        if (active_order_position == active_orders_.end()) {
-            return std::nullopt;
-        }
-
-        if (is_buy(decode_side(active_order_position->second.side))) {
-            auto price_level_position = bids_.find(active_order_position->second.price_ticks);
-            if (price_level_position == bids_.end()) {
-                return std::nullopt;
-            }
-
-            for (RestingOrder& resting_order : price_level_position->second) {
-                if (resting_order.order_id == order_id) {
-                    return resting_order;
+                if (resting_order.remaining_quantity_lots == 0) {
+                    active_orders_.erase(resting_order.order_id);
+                    resting_orders.pop_front();
                 }
             }
-        } else {
-            auto price_level_position = asks_.find(active_order_position->second.price_ticks);
-            if (price_level_position == asks_.end()) {
-                return std::nullopt;
-            }
 
-            for (RestingOrder& resting_order : price_level_position->second) {
-                if (resting_order.order_id == order_id) {
-                    return resting_order;
-                }
+            if (resting_orders.empty()) {
+                bids_.erase(best_bid_level_position);
             }
         }
 
-        return std::nullopt;
+        return incoming_remaining_quantity_lots;
     }
 
-    domain::ExecutionEventRecordV1 OrderBook::build_event_and_advance_event_sequence(
+    domain::ExecutionEventRecordV1 OrderBook::emit_order_event(
         const domain::OrderCommandRecordV1& command,
         ExecutionEventType event_type,
         std::int64_t quantity_lots,
@@ -494,14 +426,14 @@ namespace core
         return event;
     }
 
-    domain::ExecutionEventRecordV1 OrderBook::build_trade_event_and_advance_sequences(
+    domain::ExecutionEventRecordV1 OrderBook::emit_trade_event(
         const domain::OrderCommandRecordV1& command,
         const RestingOrder& resting_order,
         std::int64_t trade_price_ticks,
         std::int64_t trade_quantity_lots,
         std::int64_t incoming_remaining_lots) noexcept
     {
-        domain::ExecutionEventRecordV1 event = build_event_and_advance_event_sequence(
+        domain::ExecutionEventRecordV1 event = emit_order_event(
             command,
             ExecutionEventType::TradeExecuted,
             trade_quantity_lots,
@@ -512,21 +444,21 @@ namespace core
         return event;
     }
 
-    domain::ExecutionEventRecordV1 OrderBook::build_rejected_event(
+    domain::ExecutionEventRecordV1 OrderBook::emit_rejection_event(
         const domain::OrderCommandRecordV1& command,
         RejectionReason reason) noexcept
     {
         domain::ExecutionEventRecordV1 event =
-            build_event_and_advance_event_sequence(command, ExecutionEventType::OrderRejected, 0, 0);
+            emit_order_event(command, ExecutionEventType::OrderRejected, 0, 0);
         event.rejection_reason = static_cast<std::uint16_t>(reason);
         return event;
     }
 
-    domain::ExecutionEventRecordV1 OrderBook::build_cancelled_event(
+    domain::ExecutionEventRecordV1 OrderBook::emit_cancel_event(
         const domain::OrderCommandRecordV1& command,
         const RestingOrder& resting_order) noexcept
     {
-        domain::ExecutionEventRecordV1 event = build_event_and_advance_event_sequence(
+        domain::ExecutionEventRecordV1 event = emit_order_event(
             command,
             ExecutionEventType::OrderCancelled,
             0,
@@ -548,7 +480,7 @@ namespace core
             .remaining_quantity_lots = remaining_quantity_lots
         };
 
-        if (is_buy(decode_side(command.side))) {
+        if (decode_side(command.side) == Side::Buy) {
             bids_[command.price_ticks].push_back(resting_order);
         } else {
             asks_[command.price_ticks].push_back(resting_order);
@@ -556,47 +488,36 @@ namespace core
         active_orders_[command.order_id] = resting_order;
     }
 
-    void OrderBook::remove_resting_order(const RestingOrder& resting_order)
+    template <typename TLevels>
+    void OrderBook::erase_order_from_price_levels(TLevels& levels, const RestingOrder& resting_order)
     {
-        active_orders_.erase(resting_order.order_id);
+        const auto price_level_position = levels.find(resting_order.price_ticks);
+        if (price_level_position == levels.end()) {
+            return;
+        }
+
+        auto& resting_orders = price_level_position->second;
+        const auto resting_order_position = std::find_if(
+            resting_orders.begin(),
+            resting_orders.end(),
+            [&resting_order](const RestingOrder& order) {
+                return order.order_id == resting_order.order_id;
+            });
+
+        if (resting_order_position != resting_orders.end()) {
+            resting_orders.erase(resting_order_position);
+        }
+        if (resting_orders.empty()) {
+            levels.erase(price_level_position);
+        }
     }
 
     void OrderBook::remove_cancelled_order(const RestingOrder& resting_order)
     {
-        if (is_buy(decode_side(resting_order.side))) {
-            const auto price_level_position = bids_.find(resting_order.price_ticks);
-            if (price_level_position != bids_.end()) {
-                auto& resting_orders = price_level_position->second;
-                const auto resting_order_position = std::find_if(
-                    resting_orders.begin(),
-                    resting_orders.end(),
-                    [&resting_order](const RestingOrder& order) {
-                        return order.order_id == resting_order.order_id;
-                    });
-                if (resting_order_position != resting_orders.end()) {
-                    resting_orders.erase(resting_order_position);
-                }
-                if (resting_orders.empty()) {
-                    bids_.erase(price_level_position);
-                }
-            }
+        if (decode_side(resting_order.side) == Side::Buy) {
+            erase_order_from_price_levels(bids_, resting_order);
         } else {
-            const auto price_level_position = asks_.find(resting_order.price_ticks);
-            if (price_level_position != asks_.end()) {
-                auto& resting_orders = price_level_position->second;
-                const auto resting_order_position = std::find_if(
-                    resting_orders.begin(),
-                    resting_orders.end(),
-                    [&resting_order](const RestingOrder& order) {
-                        return order.order_id == resting_order.order_id;
-                    });
-                if (resting_order_position != resting_orders.end()) {
-                    resting_orders.erase(resting_order_position);
-                }
-                if (resting_orders.empty()) {
-                    asks_.erase(price_level_position);
-                }
-            }
+            erase_order_from_price_levels(asks_, resting_order);
         }
 
         active_orders_.erase(resting_order.order_id);

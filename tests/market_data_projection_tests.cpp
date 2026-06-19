@@ -1,91 +1,81 @@
-#include "core/instrument_engine.hpp"
-#include "core/matching_types.hpp"
-#include "domain/record_types.hpp"
+#include "domain/matching_types.hpp"
 #include "projections/market_data_projection.hpp"
-#include "wal/typed_wal_reader.hpp"
-#include "wal/typed_wal_writer.hpp"
-#include "wal/wal_segment_reader.hpp"
-#include "wal/wal_segment_writer.hpp"
 
 #include <cstdint>
-#include <filesystem>
 #include <vector>
 
 namespace
 {
-    constexpr wal::RecordType execution_event_record_type = static_cast<wal::RecordType>(domain::RecordType::ExecutionEvent);
+    constexpr std::uint32_t test_instrument_id = 77;
 
-    domain::OrderCommandRecordV1 new_order(
-        std::uint64_t sequence,
+    std::uint16_t encode(domain::ExecutionEventType event_type) noexcept
+    {
+        return static_cast<std::uint16_t>(event_type);
+    }
+
+    std::uint16_t encode(domain::Side side) noexcept
+    {
+        return static_cast<std::uint16_t>(side);
+    }
+
+    domain::ExecutionEventRecordV1 rested_event(
+        std::uint64_t event_sequence,
         std::uint64_t order_id,
-        core::Side side,
+        domain::Side side,
+        std::int64_t price_ticks,
+        std::int64_t remaining_quantity_lots)
+    {
+        domain::ExecutionEventRecordV1 event{};
+        event.event_sequence = event_sequence;
+        event.order_id = order_id;
+        event.price_ticks = price_ticks;
+        event.remaining_quantity_lots = remaining_quantity_lots;
+        event.instrument_id = test_instrument_id;
+        event.event_type = encode(domain::ExecutionEventType::OrderRested);
+        event.side = encode(side);
+        return event;
+    }
+
+    domain::ExecutionEventRecordV1 accepted_event(std::uint64_t event_sequence, std::uint64_t order_id)
+    {
+        domain::ExecutionEventRecordV1 event{};
+        event.event_sequence = event_sequence;
+        event.order_id = order_id;
+        event.instrument_id = test_instrument_id;
+        event.event_type = encode(domain::ExecutionEventType::OrderAccepted);
+        return event;
+    }
+
+    domain::ExecutionEventRecordV1 cancelled_event(std::uint64_t event_sequence, std::uint64_t order_id)
+    {
+        domain::ExecutionEventRecordV1 event{};
+        event.event_sequence = event_sequence;
+        event.order_id = order_id;
+        event.instrument_id = test_instrument_id;
+        event.event_type = encode(domain::ExecutionEventType::OrderCancelled);
+        return event;
+    }
+
+    domain::ExecutionEventRecordV1 trade_event(
+        std::uint64_t event_sequence,
+        std::uint64_t trade_id,
+        std::uint64_t incoming_order_id,
+        std::uint64_t resting_order_id,
+        domain::Side aggressor_side,
         std::int64_t price_ticks,
         std::int64_t quantity_lots)
     {
-        domain::OrderCommandRecordV1 command{};
-        command.command_sequence = sequence;
-        command.source_ingress_epoch = 1;
-        command.source_ingress_sequence = sequence;
-        command.order_id = order_id;
-        command.client_id = 1000 + order_id;
-        command.price_ticks = price_ticks;
-        command.quantity_lots = quantity_lots;
-        command.instrument_id = 77;
-        command.command_type = static_cast<std::uint16_t>(core::CommandType::NewOrder);
-        command.side = static_cast<std::uint16_t>(side);
-        command.time_in_force = static_cast<std::uint16_t>(core::TimeInForce::Gtc);
-        return command;
-    }
-
-    domain::OrderCommandRecordV1 cancel_order(
-        std::uint64_t sequence,
-        std::uint64_t order_id)
-    {
-        domain::OrderCommandRecordV1 command{};
-        command.command_sequence = sequence;
-        command.source_ingress_epoch = 1;
-        command.source_ingress_sequence = sequence;
-        command.order_id = order_id;
-        command.client_id = 1000 + order_id;
-        command.instrument_id = 77;
-        command.command_type = static_cast<std::uint16_t>(core::CommandType::CancelOrder);
-        return command;
-    }
-
-    domain::OrderCommandRecordV1 replace_order(
-        std::uint64_t sequence,
-        std::uint64_t old_order_id,
-        std::uint64_t replacement_order_id,
-        core::Side side,
-        std::int64_t price_ticks,
-        std::int64_t quantity_lots)
-    {
-        domain::OrderCommandRecordV1 command{};
-        command.command_sequence = sequence;
-        command.source_ingress_epoch = 1;
-        command.source_ingress_sequence = sequence;
-        command.order_id = old_order_id;
-        command.replacement_order_id = replacement_order_id;
-        command.client_id = 1000 + old_order_id;
-        command.price_ticks = price_ticks;
-        command.quantity_lots = quantity_lots;
-        command.instrument_id = 77;
-        command.command_type = static_cast<std::uint16_t>(core::CommandType::ReplaceOrder);
-        command.side = static_cast<std::uint16_t>(side);
-        command.time_in_force = static_cast<std::uint16_t>(core::TimeInForce::Gtc);
-        return command;
-    }
-
-    std::vector<domain::ExecutionEventRecordV1> generate_events(
-        const std::vector<domain::OrderCommandRecordV1>& commands)
-    {
-        core::InstrumentEngine engine;
-        std::vector<domain::ExecutionEventRecordV1> events;
-        for (const auto& command : commands) {
-            auto command_events = engine.apply(command);
-            events.insert(events.end(), command_events.begin(), command_events.end());
-        }
-        return events;
+        domain::ExecutionEventRecordV1 event{};
+        event.event_sequence = event_sequence;
+        event.order_id = incoming_order_id;
+        event.contra_order_id = resting_order_id;
+        event.trade_id = trade_id;
+        event.price_ticks = price_ticks;
+        event.quantity_lots = quantity_lots;
+        event.instrument_id = test_instrument_id;
+        event.event_type = encode(domain::ExecutionEventType::TradeExecuted);
+        event.side = encode(aggressor_side);
+        return event;
     }
 
     bool apply_all(
@@ -100,46 +90,11 @@ namespace
         return true;
     }
 
-    bool write_events(
-        const std::filesystem::path& path,
-        const std::vector<domain::ExecutionEventRecordV1>& events)
-    {
-        std::filesystem::remove(path);
-        wal::WalSegmentWriter raw_writer{path, 40, 1, events.empty() ? 1 : events.front().event_sequence};
-        wal::TypedWalWriter<domain::ExecutionEventRecordV1, execution_event_record_type> writer{raw_writer};
-        for (const auto& event : events) {
-            if (writer.append(event).status != wal::WalAppendStatus::Appended) {
-                return false;
-            }
-        }
-        return events.empty() || writer.commit().status == wal::WalCommitStatus::Committed;
-    }
-
-    bool apply_events_from_wal(
-        projections::MarketDataProjection& projection,
-        const std::filesystem::path& path)
-    {
-        wal::WalSegmentReader raw_reader{path};
-        wal::TypedWalReader<domain::ExecutionEventRecordV1, execution_event_record_type> reader{raw_reader};
-
-        while (true) {
-            domain::ExecutionEventRecordV1 event{};
-            const auto read = reader.read_next(event);
-            if (read.status == wal::WalReadStatus::EndOfLog) {
-                return true;
-            }
-            if (read.status != wal::WalReadStatus::RecordRead
-                || projection.apply(event).status == projections::ProjectionApplyStatus::Rejected) {
-                return false;
-            }
-        }
-    }
-
     bool Passive_buy_adds_bid_level()
     {
-        const auto events = generate_events({
-            new_order(1, 1, core::Side::Buy, 10000, 10)
-        });
+        const std::vector events{
+            rested_event(1, 1, domain::Side::Buy, 10000, 10)
+        };
         projections::MarketDataProjection projection;
         return apply_all(projection, events)
             && projection.book().bids.size() == 1
@@ -150,9 +105,9 @@ namespace
 
     bool Passive_sell_adds_ask_level()
     {
-        const auto events = generate_events({
-            new_order(1, 1, core::Side::Sell, 10100, 5)
-        });
+        const std::vector events{
+            rested_event(1, 1, domain::Side::Sell, 10100, 5)
+        };
         projections::MarketDataProjection projection;
         return apply_all(projection, events)
             && projection.book().asks.size() == 1
@@ -163,10 +118,10 @@ namespace
 
     bool Trade_reduces_resting_level()
     {
-        const auto events = generate_events({
-            new_order(1, 1, core::Side::Sell, 10100, 5),
-            new_order(2, 2, core::Side::Buy, 10100, 3)
-        });
+        const std::vector events{
+            rested_event(1, 1, domain::Side::Sell, 10100, 5),
+            trade_event(2, 1, 2, 1, domain::Side::Buy, 10100, 3)
+        };
         projections::MarketDataProjection projection;
         return apply_all(projection, events)
             && projection.trades().size() == 1
@@ -177,10 +132,10 @@ namespace
 
     bool Full_fill_removes_level()
     {
-        const auto events = generate_events({
-            new_order(1, 1, core::Side::Sell, 10100, 5),
-            new_order(2, 2, core::Side::Buy, 10100, 5)
-        });
+        const std::vector events{
+            rested_event(1, 1, domain::Side::Sell, 10100, 5),
+            trade_event(2, 1, 2, 1, domain::Side::Buy, 10100, 5)
+        };
         projections::MarketDataProjection projection;
         return apply_all(projection, events)
             && projection.trades().size() == 1
@@ -190,10 +145,10 @@ namespace
 
     bool Cancel_removes_order_from_projection()
     {
-        const auto events = generate_events({
-            new_order(1, 1, core::Side::Buy, 10000, 10),
-            cancel_order(2, 1)
-        });
+        const std::vector events{
+            rested_event(1, 1, domain::Side::Buy, 10000, 10),
+            cancelled_event(2, 1)
+        };
         projections::MarketDataProjection projection;
         return apply_all(projection, events)
             && projection.book().bids.empty()
@@ -202,10 +157,11 @@ namespace
 
     bool Replace_moves_order_to_new_price_and_new_id()
     {
-        const auto events = generate_events({
-            new_order(1, 1, core::Side::Sell, 10200, 5),
-            replace_order(2, 1, 2, core::Side::Sell, 10100, 3)
-        });
+        const std::vector events{
+            rested_event(1, 1, domain::Side::Sell, 10200, 5),
+            cancelled_event(2, 1),
+            rested_event(3, 2, domain::Side::Sell, 10100, 3)
+        };
         projections::MarketDataProjection projection;
         return apply_all(projection, events)
             && projection.book().asks.size() == 1
@@ -215,33 +171,24 @@ namespace
 
     bool Projection_rejects_event_sequence_gap()
     {
-        const auto events = generate_events({
-            new_order(1, 1, core::Side::Buy, 10000, 10)
-        });
         projections::MarketDataProjection projection;
-        if (projection.apply(events[0]).status == projections::ProjectionApplyStatus::Rejected) {
+        if (projection.apply(accepted_event(1, 1)).status == projections::ProjectionApplyStatus::Rejected) {
             return false;
         }
-        auto skipped = events[1];
-        skipped.event_sequence += 1;
-        return projection.apply(skipped).status == projections::ProjectionApplyStatus::Rejected
+        return projection.apply(rested_event(3, 1, domain::Side::Buy, 10000, 10)).status
+                == projections::ProjectionApplyStatus::Rejected
             && projection.last_applied_event_sequence() == 1;
     }
 
-    bool Projection_rebuilds_from_event_wal_readback()
+    bool Projection_rebuilds_from_event_sequence()
     {
-        const auto path = std::filesystem::current_path() / "market_data_projection_events.wal";
-        const auto events = generate_events({
-            new_order(1, 1, core::Side::Buy, 10000, 10),
-            new_order(2, 2, core::Side::Sell, 10100, 5),
-            new_order(3, 3, core::Side::Buy, 10100, 5)
-        });
-        if (!write_events(path, events)) {
-            return false;
-        }
-
+        const std::vector events{
+            rested_event(1, 1, domain::Side::Buy, 10000, 10),
+            rested_event(2, 2, domain::Side::Sell, 10100, 5),
+            trade_event(3, 1, 3, 2, domain::Side::Buy, 10100, 5)
+        };
         projections::MarketDataProjection projection;
-        const auto ok = apply_events_from_wal(projection, path)
+        return apply_all(projection, events)
             && projection.trades().size() == 1
             && projection.trades()[0].incoming_order_id == 3
             && projection.trades()[0].resting_order_id == 2
@@ -251,8 +198,6 @@ namespace
             && projection.book().bids[0].price_ticks == 10000
             && projection.book().bids[0].quantity_lots == 10
             && projection.book().asks.empty();
-        std::filesystem::remove(path);
-        return ok;
     }
 }
 
@@ -279,7 +224,7 @@ int main()
     if (!Projection_rejects_event_sequence_gap()) {
         return 7;
     }
-    if (!Projection_rebuilds_from_event_wal_readback()) {
+    if (!Projection_rebuilds_from_event_sequence()) {
         return 8;
     }
 

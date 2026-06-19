@@ -31,6 +31,8 @@ namespace core
             const domain::OrderCommandRecordV1& command);
         [[nodiscard]] std::vector<domain::ExecutionEventRecordV1> apply_replace_order(
             const domain::OrderCommandRecordV1& command);
+        [[nodiscard]] std::vector<domain::ExecutionEventRecordV1> reject_unsupported_command(
+            const domain::OrderCommandRecordV1& command);
 
         [[nodiscard]] bool has_order(std::uint64_t order_id) const;
         [[nodiscard]] std::int64_t best_bid_price() const;
@@ -54,24 +56,11 @@ namespace core
         using BidLevels = std::map<std::int64_t, std::deque<RestingOrder>, std::greater<>>;
         using AskLevels = std::map<std::int64_t, std::deque<RestingOrder>>;
 
-        struct NewOrderExecution
-        {
-            struct TradeExecutionStep
-            {
-                std::uint64_t resting_order_id = 0;
-                std::int64_t trade_price_ticks = 0;
-                std::int64_t trade_quantity_lots = 0;
-                std::int64_t incoming_remaining_quantity_lots = 0;
-            };
-
-            std::vector<TradeExecutionStep> trade_steps;
-            std::int64_t remaining_quantity_lots = 0;
-            bool has_trade = false;
-        };
-
-        [[nodiscard]] CommandType decode_command_type(const domain::OrderCommandRecordV1& command) const noexcept;
-        [[nodiscard]] Side decode_side(std::uint16_t side) const noexcept;
-        [[nodiscard]] TimeInForce decode_time_in_force(const domain::OrderCommandRecordV1& command) const noexcept;
+        [[nodiscard]] std::optional<CommandType> decode_command_type(
+            const domain::OrderCommandRecordV1& command) const noexcept;
+        [[nodiscard]] std::optional<Side> decode_side(std::uint16_t side) const noexcept;
+        [[nodiscard]] std::optional<TimeInForce> decode_time_in_force(
+            const domain::OrderCommandRecordV1& command) const noexcept;
 
         [[nodiscard]] RejectionReason validate_new_order(const domain::OrderCommandRecordV1& command) const noexcept;
         [[nodiscard]] RejectionReason validate_replace_order(const domain::OrderCommandRecordV1& command) const noexcept;
@@ -80,43 +69,32 @@ namespace core
 
         void bind_instrument_if_needed(std::uint32_t instrument_id) noexcept;
 
-        [[nodiscard]] NewOrderExecution execute_new_order_against_opposite_book(
-            const domain::OrderCommandRecordV1& command);
-        [[nodiscard]] NewOrderExecution calculate_buy_order_execution_against_asks(
-            const domain::OrderCommandRecordV1& command);
-        [[nodiscard]] NewOrderExecution calculate_sell_order_execution_against_bids(
-            const domain::OrderCommandRecordV1& command);
+        std::int64_t match_buy_order_against_asks(
+            const domain::OrderCommandRecordV1& command,
+            std::vector<domain::ExecutionEventRecordV1>& events);
+        std::int64_t match_sell_order_against_bids(
+            const domain::OrderCommandRecordV1& command,
+            std::vector<domain::ExecutionEventRecordV1>& events);
 
-        void apply_trade_step_to_resting_order(
-            const NewOrderExecution::TradeExecutionStep& trade_step);
-        void apply_trade_to_resting_order_state(
-            RestingOrder& resting_order,
-            std::int64_t trade_quantity_lots);
-        [[nodiscard]] std::optional<RestingOrder> find_mutable_order(
-            std::uint64_t order_id);
-        [[nodiscard]] std::optional<std::reference_wrapper<RestingOrder>> find_resting_order_in_book(
-            std::uint64_t order_id);
-
-        [[nodiscard]] domain::ExecutionEventRecordV1 build_event_and_advance_event_sequence(
+        [[nodiscard]] domain::ExecutionEventRecordV1 emit_order_event(
             const domain::OrderCommandRecordV1& command,
             ExecutionEventType event_type,
             std::int64_t quantity_lots,
             std::int64_t remaining_quantity_lots) noexcept;
-        [[nodiscard]] domain::ExecutionEventRecordV1 build_trade_event_and_advance_sequences(
+        [[nodiscard]] domain::ExecutionEventRecordV1 emit_trade_event(
             const domain::OrderCommandRecordV1& command,
             const RestingOrder& resting_order,
             std::int64_t trade_price_ticks,
             std::int64_t trade_quantity_lots,
             std::int64_t incoming_remaining_lots) noexcept;
-        [[nodiscard]] domain::ExecutionEventRecordV1 build_rejected_event(
+        [[nodiscard]] domain::ExecutionEventRecordV1 emit_rejection_event(
             const domain::OrderCommandRecordV1& command,
             RejectionReason reason) noexcept;
-        [[nodiscard]] domain::ExecutionEventRecordV1 build_cancelled_event(
+        [[nodiscard]] domain::ExecutionEventRecordV1 emit_cancel_event(
             const domain::OrderCommandRecordV1& command,
             const RestingOrder& resting_order) noexcept;
 
         void rest_order(const domain::OrderCommandRecordV1& command, std::int64_t remaining_quantity_lots);
-        void remove_resting_order(const RestingOrder& resting_order);
         void remove_cancelled_order(const RestingOrder& resting_order);
         [[nodiscard]] std::optional<RestingOrder> find_order(std::uint64_t order_id) const;
         [[nodiscard]] bool validate_bid_levels(std::unordered_set<std::uint64_t>& queued_order_ids) const;
@@ -138,12 +116,7 @@ namespace core
             const std::unordered_set<std::uint64_t>& queued_order_ids) const;
 
         template <typename TLevels>
-        void remove_empty_best_level(TLevels& levels)
-        {
-            if (!levels.empty() && levels.begin()->second.empty()) {
-                levels.erase(levels.begin());
-            }
-        }
+        void erase_order_from_price_levels(TLevels& levels, const RestingOrder& resting_order);
 
     private:
         std::optional<std::uint32_t> instrument_id_;

@@ -2,13 +2,13 @@
 
 // Implements command-type dispatch for the per-instrument matching state machine.
 
+#include <optional>
+
 namespace core
 {
     namespace
     {
-        constexpr std::uint16_t invalid_command_type_value = 0;
-
-        CommandType decode_command_type(const domain::OrderCommandRecordV1& command) noexcept
+        std::optional<CommandType> decode_command_type(const domain::OrderCommandRecordV1& command) noexcept
         {
             switch (static_cast<CommandType>(command.command_type)) {
             case CommandType::NewOrder:
@@ -16,7 +16,7 @@ namespace core
             case CommandType::ReplaceOrder:
                 return static_cast<CommandType>(command.command_type);
             default:
-                return static_cast<CommandType>(invalid_command_type_value);
+                return std::nullopt;
             }
         }
     }
@@ -29,15 +29,22 @@ namespace core
     std::vector<domain::ExecutionEventRecordV1> InstrumentEngine::apply(
         const domain::OrderCommandRecordV1& command)
     {
-        const CommandType command_type = decode_command_type(command);
-        if (command_type == CommandType::CancelOrder) {
+        const std::optional<CommandType> command_type = decode_command_type(command);
+        if (!command_type.has_value()) {
+            return order_book_.reject_unsupported_command(command);
+        }
+
+        if (*command_type == CommandType::NewOrder) {
+            return order_book_.apply_new_order(command);
+        }
+        if (*command_type == CommandType::CancelOrder) {
             return order_book_.apply_cancel_order(command);
         }
-        if (command_type == CommandType::ReplaceOrder) {
+        if (*command_type == CommandType::ReplaceOrder) {
             return order_book_.apply_replace_order(command);
         }
 
-        return order_book_.apply_new_order(command);
+        return order_book_.reject_unsupported_command(command);
     }
 
     const OrderBook& InstrumentEngine::order_book() const noexcept
