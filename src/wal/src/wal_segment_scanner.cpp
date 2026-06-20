@@ -1,3 +1,8 @@
+/**
+ * @file wal_segment_scanner.cpp
+ * @brief Implements recovery scanning for one WAL segment.
+ */
+
 #include "wal/wal_segment_scanner.hpp"
 
 #include "wal/wal_checksum.hpp"

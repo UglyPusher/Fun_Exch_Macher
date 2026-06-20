@@ -1,3 +1,8 @@
+/**
+ * @file replay.cpp
+ * @brief Implements deterministic command replay and event comparison.
+ */
+
 #include "core/replay.hpp"
 
 #include <utility>

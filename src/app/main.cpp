@@ -1,3 +1,11 @@
+/**
+ * @file main.cpp
+ * @brief Prototype CLI orchestration for run, replay, and dump commands.
+ *
+ * This file wires app, WAL, core, replay, and projection layers together. It
+ * must not become the owner of matching rules or WAL physical-format logic.
+ */
+
 #include "event_dump.hpp"
 #include "scenario_loader.hpp"
 

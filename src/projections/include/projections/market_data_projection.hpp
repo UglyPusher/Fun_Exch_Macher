@@ -1,5 +1,14 @@
 #pragma once
 
+/**
+ * @file market_data_projection.hpp
+ * @brief Public market-data view rebuilt from execution events.
+ *
+ * MarketDataProjection consumes ExecutionEventRecordV1 values only. It must not
+ * read Command WAL records, call the matcher, or decide whether commands are
+ * valid.
+ */
+
 #include "domain/execution_event_record.hpp"
 
 #include <cstdint>
@@ -10,20 +19,20 @@
 
 namespace projections
 {
-    // PublicPriceLevel is an aggregated visible quantity at one price.
-    // Owns: public price and visible quantity fields.
-    // Does not own: order priority or individual resting order identity.
-    // Invariant: quantity_lots is positive when the level is present in a book view.
+    /**
+     * @brief Aggregated visible quantity at one public price level.
+     */
     struct PublicPriceLevel
     {
         std::int64_t price_ticks = 0;
         std::int64_t quantity_lots = 0;
     };
 
-    // PublicBookView is the market-data projection of active visible liquidity.
-    // Owns: aggregated bid and ask levels for one event stream.
-    // Does not own: matching decisions, replay comparison, or WAL reading.
-    // Invariant: bids are descending by price and asks are ascending by price.
+    /**
+     * @brief Public book view derived from active projected orders.
+     *
+     * Bids are ordered descending by price and asks ascending by price.
+     */
     struct PublicBookView
     {
         std::uint32_t instrument_id = 0;
@@ -31,10 +40,9 @@ namespace projections
         std::vector<PublicPriceLevel> asks;
     };
 
-    // PublicTrade is the projected public representation of a TradeExecuted event.
-    // Owns: identifiers and printable trade fields copied from execution events.
-    // Does not own: trade id allocation or price-time priority rules.
-    // Invariant: quantity_lots is positive for every stored trade.
+    /**
+     * @brief Public trade row copied from a TradeExecuted event.
+     */
     struct PublicTrade
     {
         std::uint64_t trade_id = 0;
@@ -46,6 +54,9 @@ namespace projections
         std::int64_t quantity_lots = 0;
     };
 
+    /**
+     * @brief Result status for applying one event to a projection.
+     */
     enum class ProjectionApplyStatus
     {
         Applied,
@@ -53,23 +64,40 @@ namespace projections
         Rejected
     };
 
+    /**
+     * @brief Result of applying one execution event to the projection.
+     */
     struct ProjectionApplyResult
     {
         ProjectionApplyStatus status = ProjectionApplyStatus::Rejected;
         std::string error;
     };
 
-    // MarketDataProjection reduces execution events into public book and trade views.
-    // Owns: projected active orders, aggregated book levels, and public trades.
-    // Does not own: command validation, order matching, replay, or WAL I/O.
-    // Invariant: events are applied in contiguous event_sequence order.
+    /**
+     * @brief Reduces execution events into public book and trade views.
+     *
+     * Events must be applied in contiguous event_sequence order. Rejected
+     * application does not advance the last applied sequence.
+     */
     class MarketDataProjection
     {
     public:
+        /**
+         * @brief Applies one execution event to the projected public state.
+         */
         [[nodiscard]] ProjectionApplyResult apply(const domain::ExecutionEventRecordV1& event);
 
+        /**
+         * @brief Returns the latest aggregated public book.
+         */
         [[nodiscard]] const PublicBookView& book() const noexcept;
+        /**
+         * @brief Returns the projected public trade tape.
+         */
         [[nodiscard]] std::span<const PublicTrade> trades() const noexcept;
+        /**
+         * @brief Returns the last event sequence accepted or ignored by this projection.
+         */
         [[nodiscard]] std::uint64_t last_applied_event_sequence() const noexcept;
 
     private:

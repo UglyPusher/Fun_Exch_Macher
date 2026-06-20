@@ -1,5 +1,14 @@
 #pragma once
 
+/**
+ * @file wal_segment_writer.hpp
+ * @brief Append writer for one binary WAL segment file.
+ *
+ * The writer owns segment creation/reopen, record sequencing, checksums,
+ * alignment, and pending-to-committed position tracking. It must not inspect
+ * business fields inside payload bytes.
+ */
+
 #include "wal/raw_wal_writer.hpp"
 #include "wal/wal_record_header.hpp"
 #include "wal/wal_segment_header.hpp"
@@ -12,29 +21,62 @@
 
 namespace wal
 {
+    /**
+     * @brief Raw WAL writer backed by one segment file.
+     */
     class WalSegmentWriter final : public RawWalWriter
     {
     public:
+        /**
+         * @brief Opens or creates a segment for one stream epoch.
+         */
         WalSegmentWriter(
             std::filesystem::path file_path,
             StreamId stream_id,
             EpochId epoch,
             SequenceNumber first_sequence);
 
+        /**
+         * @brief Closes the underlying file stream.
+         */
         ~WalSegmentWriter() override;
 
+        /**
+         * @brief Appends one raw payload as the next WAL record.
+         */
         WalAppendResult append(
             RecordType record_type,
             std::span<const std::byte> payload) override;
 
+        /**
+         * @brief Flushes pending bytes and publishes committed positions.
+         */
         WalCommitResult commit() override;
 
+        /**
+         * @brief Returns the last appended position.
+         */
         [[nodiscard]] WalPosition last_position() const noexcept override;
+        /**
+         * @brief Returns the last position made visible by commit().
+         */
         [[nodiscard]] WalPosition last_committed_position() const noexcept;
+        /**
+         * @brief Checks whether commit() has published at least one position.
+         */
         [[nodiscard]] bool has_committed_position() const noexcept;
+        /**
+         * @brief Returns the number of appended positions waiting for commit.
+         */
         [[nodiscard]] std::size_t pending_count() const noexcept;
+        /**
+         * @brief Returns the number of committed positions waiting to be consumed.
+         */
         [[nodiscard]] std::size_t committed_queue_size() const noexcept;
 
+        /**
+         * @brief Pops the oldest committed position from the visibility queue.
+         */
         bool pop_committed_position(WalPosition& out);
 
     private:

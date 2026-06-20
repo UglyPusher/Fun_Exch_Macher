@@ -68,6 +68,7 @@ Implemented in this prototype:
 - pending-to-committed writer boundary;
 - committed position queue after write/flush acknowledgement;
 - tests for corruption, recovery, sequencing, and typed boundaries.
+- app-level command/event WAL integration with the current matcher pipeline.
 
 Not implemented yet:
 
@@ -76,7 +77,6 @@ Not implemented yet:
 - multi-segment rotation;
 - replicated WAL / quorum append;
 - stream health owner;
-- matcher integration;
 - online dual-lane execution.
 
 ## Directory Layout

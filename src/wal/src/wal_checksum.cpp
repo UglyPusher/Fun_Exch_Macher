@@ -1,3 +1,8 @@
+/**
+ * @file wal_checksum.cpp
+ * @brief Implements CRC32 calculation used by WAL integrity checks.
+ */
+
 #include "wal/wal_checksum.hpp"
 
 namespace wal

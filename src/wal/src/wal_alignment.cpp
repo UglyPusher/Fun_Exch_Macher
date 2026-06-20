@@ -1,3 +1,8 @@
+/**
+ * @file wal_alignment.cpp
+ * @brief Implements byte-alignment helpers for WAL records.
+ */
+
 #include "wal/wal_alignment.hpp"
 
 namespace wal

@@ -1,3 +1,8 @@
+/**
+ * @file wal_file.cpp
+ * @brief Implements filesystem helpers used by WAL segments.
+ */
+
 #include "wal/wal_file.hpp"
 
 namespace wal

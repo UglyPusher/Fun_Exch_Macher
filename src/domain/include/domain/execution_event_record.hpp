@@ -1,10 +1,26 @@
 #pragma once
 
+/**
+ * @file execution_event_record.hpp
+ * @brief Durable execution event DTO emitted by the matching core.
+ *
+ * ExecutionEventRecordV1 is the event payload written to the Execution Event
+ * WAL and consumed by replay/projection code. This file must not contain
+ * matching rules, projection aggregation, or WAL physical-format code.
+ */
+
 #include <cstdint>
 #include <type_traits>
 
 namespace domain
 {
+    /**
+     * @brief Versioned fact emitted by deterministic order matching.
+     *
+     * The type is trivially copyable because typed WAL adapters persist it as a
+     * binary payload. Numeric event and side fields are durable wire values and
+     * must be interpreted by consumers at their module boundary.
+     */
     struct ExecutionEventRecordV1
     {
         std::uint64_t event_sequence = 0;

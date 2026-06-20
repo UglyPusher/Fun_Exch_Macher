@@ -1,3 +1,8 @@
+/**
+ * @file wal_position.cpp
+ * @brief Implements stream/epoch position checks.
+ */
+
 #include "wal/wal_position.hpp"
 
 namespace wal

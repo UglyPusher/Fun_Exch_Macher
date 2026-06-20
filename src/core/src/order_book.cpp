@@ -1,6 +1,10 @@
-// Implements the deterministic order book state machine.
-// Event and trade sequences are part of replay, so all sequence allocation
-// stays inside this module and advances only when an event is emitted.
+/**
+ * @file order_book.cpp
+ * @brief Implements deterministic price-time matching for one instrument.
+ *
+ * Event and trade sequences are part of replay, so all sequence allocation
+ * stays inside this module and advances only when an event is emitted.
+ */
 
 #include "core/order_book.hpp"
 

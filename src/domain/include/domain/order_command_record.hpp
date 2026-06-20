@@ -1,10 +1,26 @@
 #pragma once
 
+/**
+ * @file order_command_record.hpp
+ * @brief Durable command DTO accepted by the matching core.
+ *
+ * OrderCommandRecordV1 is the normalized command payload written to the Command
+ * WAL and replayed into the matcher. This file must not contain validation,
+ * matching behavior, or WAL physical-format code.
+ */
+
 #include <cstdint>
 #include <type_traits>
 
 namespace domain
 {
+    /**
+     * @brief Versioned normalized order command record.
+     *
+     * The type is trivially copyable because typed WAL adapters persist it as a
+     * binary payload. Enum-like fields remain fixed-width integers at this
+     * boundary and must be decoded by core logic before domain use.
+     */
     struct OrderCommandRecordV1
     {
         std::uint64_t command_sequence = 0;

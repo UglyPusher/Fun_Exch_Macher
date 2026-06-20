@@ -1,3 +1,8 @@
+/**
+ * @file wal_segment_writer.cpp
+ * @brief Implements append, reopen, and commit handling for one WAL segment.
+ */
+
 #include "wal/wal_segment_writer.hpp"
 
 #include "wal/wal_alignment.hpp"

@@ -1,3 +1,8 @@
+/**
+ * @file event_dump.cpp
+ * @brief Implements human-readable command and event formatting for the CLI.
+ */
+
 #include "event_dump.hpp"
 
 #include "core/matching_types.hpp"

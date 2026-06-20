@@ -1,3 +1,8 @@
+/**
+ * @file wal_record_header.cpp
+ * @brief Implements WAL record header validation and CRC calculation.
+ */
+
 #include "wal/wal_record_header.hpp"
 
 #include "wal/wal_alignment.hpp"

@@ -1,3 +1,8 @@
+/**
+ * @file dummy_instrument_engine.cpp
+ * @brief Implements the historical scaffold engine used by simple tests.
+ */
+
 #include "core/dummy_instrument_engine.hpp"
 
 namespace core

@@ -1,3 +1,8 @@
+/**
+ * @file wal_commit_policy.cpp
+ * @brief Implements prototype WAL commit policy strategies.
+ */
+
 #include "wal/wal_commit_policy.hpp"
 #include "wal/raw_wal_writer.hpp"
 

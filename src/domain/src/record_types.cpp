@@ -1,3 +1,8 @@
+/**
+ * @file record_types.cpp
+ * @brief Provides diagnostic names for durable domain record types.
+ */
+
 #include "domain/record_types.hpp"
 
 namespace domain {

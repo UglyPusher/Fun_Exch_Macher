@@ -1,8 +1,13 @@
 #pragma once
 
-// Defines the deterministic in-memory order book used by InstrumentEngine.
-// This module owns price-time priority, active order indexing, and event emission.
-// It must not perform I/O and must not mix orders from different instruments.
+/**
+ * @file order_book.hpp
+ * @brief Deterministic in-memory order book for one instrument.
+ *
+ * OrderBook owns price-time priority, active order indexing, event sequence
+ * allocation, and trade id allocation. It must not perform I/O, parse scenarios,
+ * call projections, or mix orders from different instruments.
+ */
 
 #include "core/matching_types.hpp"
 #include "domain/execution_event_record.hpp"
@@ -20,26 +25,69 @@
 
 namespace core
 {
+    /**
+     * @brief Deterministic reducer from order commands to execution events.
+     *
+     * The book mutates only its own in-memory state and returns durable
+     * ExecutionEvent records to the caller. Event sequencing is part of the
+     * replay contract and advances only when an event is emitted.
+     */
     class OrderBook
     {
     public:
+        /**
+         * @brief Creates an empty book with the next event sequence initialized.
+         */
         explicit OrderBook(std::uint64_t first_event_sequence = 1) noexcept;
 
+        /**
+         * @brief Validates, matches, and possibly rests a new order command.
+         */
         [[nodiscard]] std::vector<domain::ExecutionEventRecordV1> apply_new_order(
             const domain::OrderCommandRecordV1& command);
+        /**
+         * @brief Cancels an active resting order without changing other book state.
+         */
         [[nodiscard]] std::vector<domain::ExecutionEventRecordV1> apply_cancel_order(
             const domain::OrderCommandRecordV1& command);
+        /**
+         * @brief Replaces an active order as cancel-old plus submit-new.
+         */
         [[nodiscard]] std::vector<domain::ExecutionEventRecordV1> apply_replace_order(
             const domain::OrderCommandRecordV1& command);
+        /**
+         * @brief Emits an unsupported-command rejection without mutating the book.
+         */
         [[nodiscard]] std::vector<domain::ExecutionEventRecordV1> reject_unsupported_command(
             const domain::OrderCommandRecordV1& command);
 
+        /**
+         * @brief Checks whether an order id is currently active in the book.
+         */
         [[nodiscard]] bool has_order(std::uint64_t order_id) const;
+        /**
+         * @brief Returns the current best bid price, or zero when no bid exists.
+         */
         [[nodiscard]] std::int64_t best_bid_price() const;
+        /**
+         * @brief Returns the current best ask price, or zero when no ask exists.
+         */
         [[nodiscard]] std::int64_t best_ask_price() const;
+        /**
+         * @brief Returns active remaining quantity for an order id, or zero when absent.
+         */
         [[nodiscard]] std::int64_t remaining_quantity(std::uint64_t order_id) const;
+        /**
+         * @brief Returns the number of active resting orders.
+         */
         [[nodiscard]] std::size_t active_order_count() const noexcept;
+        /**
+         * @brief Verifies that active index and price levels describe the same orders.
+         */
         [[nodiscard]] bool validate_invariants() const;
+        /**
+         * @brief Builds a compact diagnostic snapshot for replay failure reports.
+         */
         [[nodiscard]] std::string snapshot() const;
 
     private:

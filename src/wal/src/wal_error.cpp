@@ -1,3 +1,8 @@
+/**
+ * @file wal_error.cpp
+ * @brief Provides diagnostic names for WAL error codes.
+ */
+
 #include "wal/wal_error.hpp"
 
 namespace wal {

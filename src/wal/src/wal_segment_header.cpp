@@ -1,3 +1,8 @@
+/**
+ * @file wal_segment_header.cpp
+ * @brief Implements WAL segment header validation and CRC calculation.
+ */
+
 #include "wal/wal_segment_header.hpp"
 
 #include "wal/wal_checksum.hpp"

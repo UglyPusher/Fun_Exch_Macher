@@ -1,6 +1,9 @@
-#include "core/instrument_engine.hpp"
+/**
+ * @file instrument_engine.cpp
+ * @brief Implements command dispatch for the per-instrument matching state.
+ */
 
-// Implements command-type dispatch for the per-instrument matching state machine.
+#include "core/instrument_engine.hpp"
 
 #include <optional>
 

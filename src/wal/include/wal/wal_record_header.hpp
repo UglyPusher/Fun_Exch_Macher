@@ -1,5 +1,14 @@
 #pragma once
 
+/**
+ * @file wal_record_header.hpp
+ * @brief Fixed binary header stored before every WAL payload.
+ *
+ * The record header owns physical metadata: record type, stream identity,
+ * sequence, payload length, and checksums. It must not encode domain-level
+ * validity.
+ */
+
 #include "wal/wal_types.hpp"
 
 #include <cstdint>
@@ -7,6 +16,9 @@
 
 namespace wal
 {
+    /**
+     * @brief On-disk metadata for one WAL record.
+     */
     struct WalRecordHeader
     {
         std::uint32_t magic = WalRecordMagic;
@@ -25,11 +37,17 @@ namespace wal
 
         std::uint32_t header_crc = 0;
 
+        /**
+         * @brief Checks magic, version, and header size fields that do not need payload data.
+         */
         [[nodiscard]] bool has_valid_static_fields() const noexcept;
     };
 
     static_assert(std::is_trivially_copyable_v<WalRecordHeader>);
     static_assert(std::is_standard_layout_v<WalRecordHeader>);
 
+    /**
+     * @brief Calculates the CRC for a record header with header_crc ignored.
+     */
     [[nodiscard]] std::uint32_t calculate_record_header_crc(WalRecordHeader header) noexcept;
 }

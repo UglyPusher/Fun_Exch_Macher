@@ -1,5 +1,10 @@
-// Applies execution events into a public market-data view.
-// Projection owns no matching decisions and depends only on domain event contracts.
+/**
+ * @file market_data_projection.cpp
+ * @brief Applies execution events into a public market-data view.
+ *
+ * Projection owns no matching decisions and depends only on domain event
+ * contracts.
+ */
 
 #include "projections/market_data_projection.hpp"
 

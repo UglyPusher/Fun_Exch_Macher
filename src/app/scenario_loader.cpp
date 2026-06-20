@@ -1,3 +1,8 @@
+/**
+ * @file scenario_loader.cpp
+ * @brief Parses prototype scenario text into normalized command records.
+ */
+
 #include "scenario_loader.hpp"
 
 #include "core/matching_types.hpp"

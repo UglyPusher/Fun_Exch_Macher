@@ -1,3 +1,8 @@
+/**
+ * @file wal_segment_reader.cpp
+ * @brief Implements validated sequential reading of one WAL segment.
+ */
+
 #include "wal/wal_segment_reader.hpp"
 
 #include "wal/wal_alignment.hpp"
