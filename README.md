@@ -8,6 +8,10 @@ This is not a production exchange and not an HFT system. The goal is to demonstr
 Normalized Command Log -> Deterministic Matcher -> Execution Event Log
 ```
 
+The current project is still a prototype. In particular, WAL `commit()` currently
+flushes the C++ stream buffer; it is not an `fsync` / `fdatasync` durable
+boundary yet.
+
 ## Current Status
 
 Implemented now:
@@ -28,11 +32,13 @@ Implemented now:
 - WAL-focused tests covering headers, checksum stability, segment write/read, recovery scanning, and typed adapters.
 - Replay tests covering happy paths, event count mismatch, event field mismatch, event order mismatch, extra/missing stored events, command sequence breaks, cancel replay, and replace replay.
 - CLI/demo runner with `run`, `replay`, `dump-events`, `dump-book`, and `dump-trades` commands.
+- Manual load benchmark for separating command WAL write, command WAL read, matcher-only, Event WAL append, and full read/match/event pipeline costs.
+- Local README files for each meaningful `src/` directory, including reserved scaffold directories.
 
 Not implemented yet:
 
 - Ingress normalizer/router and per-instrument command streams.
-- Risk, reservation, portfolio, accounting, snapshots, fsync/fdatasync durability policy, and multi-segment rotation.
+- Risk, reservation, portfolio, accounting, snapshots, fsync/fdatasync durability policy, batch commit recovery contract, and multi-segment rotation.
 
 ## Architecture Direction
 
@@ -71,24 +77,37 @@ There is deliberately no single global sequence for everything. Ingress, command
 ## Layout
 
 ```text
+benchmarks/           Manual throughput tools and local benchmark results
 docs/                 Architecture and behavior notes
 examples/             Sample input sessions
 src/app/              CLI entrypoint
 src/core/             Instrument engine, order book, and matching core boundary
 src/domain/           Storage DTOs and domain record types
+src/matcher/          Reserved scaffold; active matching code is not here yet
+src/order_book/       Reserved scaffold; active order book lives in src/core
 src/projections/      Downstream projections from execution events
 src/wal/              WAL core, typed adapters, and segment storage
 tests/                Smoke and WAL behavior tests
+TODO.md               Future architecture work that is not part of this stage
 ```
 
 Detailed design notes live in:
 
+- `docs/CURRENT_STATE_DOCUMENTATION.md`
 - `docs/architecture.md`
 - `docs/architecture/current_architecture.md`
 - `docs/architecture/expected_architecture.md`
 - `docs/wal.md`
 - `docs/matching_rules.md`
 - `docs/replay.md`
+- `src/README.md`
+- `benchmarks/README.md`
+- `benchmarks/results/README.md`
+- `TODO.md`
+
+Active matching code currently lives in `src/core/`. The `src/matcher/` and
+`src/order_book/` directories are reserved for possible future extraction and
+must not receive duplicate implementations casually.
 
 ## Requirements
 
@@ -176,6 +195,17 @@ CANCEL seq instrument client order
 REPLACE seq instrument client old_order new_order side price_ticks quantity_lots GTC
 ```
 
+Run the manual load benchmark after building the `load_pipeline_benchmark`
+target:
+
+```bash
+./build/load_pipeline_benchmark 100000 build/load_benchmark 0
+```
+
+The third argument is `commit_every`. Supported values are `1`, `16`, `64`,
+`256`, `1024`, and `0`; `0` means one commit at the end of each WAL write phase.
+The benchmark is intentionally outside `ctest`.
+
 ## WAL Design Snapshot
 
 The WAL core is payload-agnostic. It knows only:
@@ -190,6 +220,17 @@ The WAL core is payload-agnostic. It knows only:
 - checksum;
 - alignment;
 - commit result.
+
+Current prototype commit semantics:
+
+```text
+WalSegmentWriter::commit() -> std::ofstream::flush()
+```
+
+This is useful for separating append and flush costs in the prototype benchmark,
+but it is not a durable storage guarantee. Durable `fsync` / `fdatasync`
+semantics and the recovery contract for Event WAL batch commit remain future
+work.
 
 Domain decoding lives above the raw WAL layer:
 
@@ -221,6 +262,9 @@ Current test groups include:
 - Market data projection from Execution Event WAL into public book/trade state.
 - CLI/demo runner smoke checked through scenario files.
 
+Manual benchmarks are not part of `ctest`. See `benchmarks/README.md` and
+`benchmarks/results/README.md` for the current load-pipeline measurements.
+
 ## Scope Guard
 
 Out of scope for the first prototype:
@@ -231,6 +275,7 @@ Out of scope for the first prototype:
 - Risk engine and portfolio accounting.
 - Clustering, failover, consensus, and replicated durability.
 - Advanced order types.
+- Batch matching and Event WAL batch commit.
 
 First meaningful prototype target:
 
