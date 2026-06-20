@@ -2,13 +2,14 @@
  * @file load_pipeline_benchmark.cpp
  * @brief Measures command throughput through WAL and the current matcher.
  *
- * This executable is a manual benchmark, not a unit test. It reports both the
- * full pipeline and separated read/match/event-WAL phases so WAL cost is not
- * hidden behind a single commands-per-second number.
+ * This executable is a manual benchmark, not a unit test. It keeps counters
+ * local to each measured phase so the full pipeline cannot accidentally report
+ * counters collected by a different phase.
  */
 
 #include "core/instrument_engine.hpp"
 #include "core/matching_types.hpp"
+#include "domain/execution_event_record.hpp"
 #include "domain/order_command_record.hpp"
 #include "domain/record_types.hpp"
 #include "wal/typed_wal_reader.hpp"
@@ -43,6 +44,7 @@ namespace
     {
         std::uint64_t command_count = 100000;
         std::filesystem::path output_directory = "benchmark_wal";
+        std::uint64_t commit_every = 0;
     };
 
     struct BenchmarkPaths
@@ -52,25 +54,27 @@ namespace
         std::filesystem::path phase_event_wal;
     };
 
-    struct BenchmarkMeasurements
+    struct PhaseMeasurement
     {
-        std::uint64_t generated_commands = 0;
-        std::uint64_t command_wal_records_written = 0;
-        std::uint64_t command_wal_commits = 0;
-        std::uint64_t command_wal_records_read = 0;
-        std::uint64_t commands_matched = 0;
-        std::uint64_t execution_events_emitted = 0;
-        std::uint64_t event_wal_records_written = 0;
-        std::uint64_t event_wal_commits = 0;
+        std::string name;
+        std::uint64_t command_count = 0;
+        std::uint64_t event_count = 0;
+        std::uint64_t record_count = 0;
+        std::uint64_t commit_count = 0;
+        std::uint64_t byte_count = 0;
+        double elapsed_seconds = 0.0;
+    };
 
-        double command_wal_write_and_commit_seconds = 0.0;
-        double command_wal_read_only_seconds = 0.0;
-        double matcher_only_without_event_wal_seconds = 0.0;
-        double event_wal_append_and_commit_seconds = 0.0;
-        double read_match_event_pipeline_seconds = 0.0;
+    struct GeneratedCommands
+    {
+        std::vector<domain::OrderCommandRecordV1> commands;
+        PhaseMeasurement measurement;
+    };
 
-        std::uint64_t command_wal_bytes = 0;
-        std::uint64_t event_wal_bytes = 0;
+    struct MatchedEvents
+    {
+        std::vector<domain::ExecutionEventRecordV1> events;
+        PhaseMeasurement measurement;
     };
 
     /**
@@ -82,7 +86,18 @@ namespace
     }
 
     /**
-     * @brief Parses the optional command count and output directory arguments.
+     * @brief Returns zero for missing files so failed phases do not throw while printing diagnostics.
+     */
+    std::uint64_t file_size_or_zero(const std::filesystem::path& file_path)
+    {
+        if (!std::filesystem::exists(file_path)) {
+            return 0;
+        }
+        return std::filesystem::file_size(file_path);
+    }
+
+    /**
+     * @brief Parses the command count, output directory, and WAL commit interval.
      */
     BenchmarkConfig parse_config(int argc, char** argv)
     {
@@ -93,7 +108,23 @@ namespace
         if (argc > 2) {
             config.output_directory = argv[2];
         }
+        if (argc > 3) {
+            config.commit_every = static_cast<std::uint64_t>(std::stoull(argv[3]));
+        }
         return config;
+    }
+
+    /**
+     * @brief Validates commit interval values supported by the benchmark output.
+     */
+    bool has_supported_commit_interval(std::uint64_t commit_every) noexcept
+    {
+        return commit_every == 0
+            || commit_every == 1
+            || commit_every == 16
+            || commit_every == 64
+            || commit_every == 256
+            || commit_every == 1024;
     }
 
     /**
@@ -108,9 +139,6 @@ namespace
         };
     }
 
-    /**
-     * @brief Builds a deterministic sell order that rests in the book.
-     */
     domain::OrderCommandRecordV1 make_passive_sell_command(std::uint64_t command_sequence)
     {
         domain::OrderCommandRecordV1 command{};
@@ -128,9 +156,6 @@ namespace
         return command;
     }
 
-    /**
-     * @brief Builds a deterministic buy order that crosses the previous sell.
-     */
     domain::OrderCommandRecordV1 make_aggressive_buy_command(std::uint64_t command_sequence)
     {
         domain::OrderCommandRecordV1 command{};
@@ -148,9 +173,6 @@ namespace
         return command;
     }
 
-    /**
-     * @brief Generates a stable command stream with bounded order book size.
-     */
     domain::OrderCommandRecordV1 make_benchmark_command(std::uint64_t command_sequence)
     {
         if (command_sequence % 2 == 1) {
@@ -160,27 +182,86 @@ namespace
     }
 
     /**
-     * @brief Generates all benchmark commands once so phase runs use identical input.
+     * @brief Generates a stable command stream with bounded order book size.
      */
-    std::vector<domain::OrderCommandRecordV1> generate_commands(std::uint64_t command_count)
+    GeneratedCommands generate_commands(std::uint64_t command_count)
     {
-        std::vector<domain::OrderCommandRecordV1> commands;
-        commands.reserve(static_cast<std::size_t>(command_count));
+        GeneratedCommands generated_commands;
+        generated_commands.measurement.name = "generate_commands";
+        generated_commands.commands.reserve(static_cast<std::size_t>(command_count));
+
+        const Clock::time_point started_at = Clock::now();
         for (std::uint64_t command_sequence = 1; command_sequence <= command_count; ++command_sequence) {
-            commands.push_back(make_benchmark_command(command_sequence));
+            generated_commands.commands.push_back(make_benchmark_command(command_sequence));
         }
-        return commands;
+        const Clock::time_point finished_at = Clock::now();
+
+        generated_commands.measurement.command_count = generated_commands.commands.size();
+        generated_commands.measurement.elapsed_seconds = seconds_between(started_at, finished_at);
+        return generated_commands;
     }
 
     /**
-     * @brief Writes generated commands to the Command WAL and commits once.
+     * @brief Commits a WAL writer after the configured number of appended records.
+     */
+    template <typename TWriter>
+    bool commit_if_interval_is_reached(
+        TWriter& writer,
+        std::uint64_t commit_every,
+        std::uint64_t& records_since_commit,
+        PhaseMeasurement& measurement,
+        std::string_view failure_message)
+    {
+        if (commit_every == 0 || records_since_commit < commit_every) {
+            return true;
+        }
+
+        const wal::WalCommitResult commit_result = writer.commit();
+        if (commit_result.status != wal::WalCommitStatus::Committed) {
+            std::cerr << failure_message << '\n';
+            return false;
+        }
+
+        ++measurement.commit_count;
+        records_since_commit = 0;
+        return true;
+    }
+
+    /**
+     * @brief Commits any records left after a WAL write phase.
+     */
+    template <typename TWriter>
+    bool commit_remaining_records(
+        TWriter& writer,
+        std::uint64_t records_since_commit,
+        PhaseMeasurement& measurement,
+        std::string_view failure_message)
+    {
+        if (records_since_commit == 0) {
+            return true;
+        }
+
+        const wal::WalCommitResult commit_result = writer.commit();
+        if (commit_result.status != wal::WalCommitStatus::Committed) {
+            std::cerr << failure_message << '\n';
+            return false;
+        }
+
+        ++measurement.commit_count;
+        return true;
+    }
+
+    /**
+     * @brief Writes generated commands to the Command WAL.
      */
     bool write_command_wal(
         const std::filesystem::path& command_wal_path,
         const std::vector<domain::OrderCommandRecordV1>& commands,
-        BenchmarkMeasurements& measurements)
+        std::uint64_t commit_every,
+        PhaseMeasurement& measurement)
     {
         std::filesystem::remove(command_wal_path);
+        measurement.name = "command_wal_write";
 
         wal::WalSegmentWriter raw_command_writer{
             command_wal_path,
@@ -192,6 +273,7 @@ namespace
             raw_command_writer
         };
 
+        std::uint64_t records_since_commit = 0;
         const Clock::time_point started_at = Clock::now();
         for (const domain::OrderCommandRecordV1& command : commands) {
             const wal::WalAppendResult append_result = command_writer.append(command);
@@ -200,19 +282,31 @@ namespace
                           << command.command_sequence << '\n';
                 return false;
             }
-            ++measurements.command_wal_records_written;
+
+            ++measurement.command_count;
+            ++measurement.record_count;
+            ++records_since_commit;
+            if (!commit_if_interval_is_reached(
+                    command_writer,
+                    commit_every,
+                    records_since_commit,
+                    measurement,
+                    "command WAL commit failed")) {
+                return false;
+            }
         }
 
-        const wal::WalCommitResult commit_result = command_writer.commit();
-        if (commit_result.status != wal::WalCommitStatus::Committed) {
-            std::cerr << "command WAL commit failed\n";
+        if (!commit_remaining_records(
+                command_writer,
+                records_since_commit,
+                measurement,
+                "command WAL final commit failed")) {
             return false;
         }
-        ++measurements.command_wal_commits;
 
         const Clock::time_point finished_at = Clock::now();
-        measurements.command_wal_write_and_commit_seconds = seconds_between(started_at, finished_at);
-        measurements.command_wal_bytes = std::filesystem::file_size(command_wal_path);
+        measurement.elapsed_seconds = seconds_between(started_at, finished_at);
+        measurement.byte_count = file_size_or_zero(command_wal_path);
         return true;
     }
 
@@ -221,14 +315,15 @@ namespace
      */
     bool measure_command_wal_read_only(
         const std::filesystem::path& command_wal_path,
-        BenchmarkMeasurements& measurements)
+        PhaseMeasurement& measurement)
     {
+        measurement.name = "command_wal_read_only";
+
         wal::WalSegmentReader raw_command_reader{command_wal_path};
         wal::TypedWalReader<domain::OrderCommandRecordV1, order_command_record_type> command_reader{
             raw_command_reader
         };
 
-        std::uint64_t records_read = 0;
         const Clock::time_point started_at = Clock::now();
         while (true) {
             domain::OrderCommandRecordV1 command{};
@@ -238,51 +333,54 @@ namespace
             }
             if (command_read_result.status != wal::WalReadStatus::RecordRead) {
                 std::cerr << "command WAL read-only pass failed after "
-                          << records_read << " commands\n";
+                          << measurement.command_count << " commands\n";
                 return false;
             }
-            ++records_read;
+
+            ++measurement.command_count;
+            ++measurement.record_count;
         }
 
         const Clock::time_point finished_at = Clock::now();
-        measurements.command_wal_records_read = records_read;
-        measurements.command_wal_read_only_seconds = seconds_between(started_at, finished_at);
+        measurement.elapsed_seconds = seconds_between(started_at, finished_at);
+        measurement.byte_count = file_size_or_zero(command_wal_path);
         return true;
     }
 
     /**
      * @brief Applies commands directly to the matcher and stores emitted events in memory.
      */
-    std::vector<domain::ExecutionEventRecordV1> measure_matcher_only(
-        const std::vector<domain::OrderCommandRecordV1>& commands,
-        BenchmarkMeasurements& measurements)
+    MatchedEvents measure_matcher_only(const std::vector<domain::OrderCommandRecordV1>& commands)
     {
-        std::vector<domain::ExecutionEventRecordV1> execution_events;
-        execution_events.reserve(commands.size() * 3);
+        MatchedEvents matched_events;
+        matched_events.measurement.name = "matcher_only_without_event_wal";
+        matched_events.events.reserve(commands.size() * 3);
 
         core::InstrumentEngine engine{first_sequence};
         const Clock::time_point started_at = Clock::now();
         for (const domain::OrderCommandRecordV1& command : commands) {
             std::vector<domain::ExecutionEventRecordV1> command_events = engine.apply(command);
-            ++measurements.commands_matched;
-            measurements.execution_events_emitted += command_events.size();
-            execution_events.insert(execution_events.end(), command_events.begin(), command_events.end());
+            ++matched_events.measurement.command_count;
+            matched_events.measurement.event_count += command_events.size();
+            matched_events.events.insert(matched_events.events.end(), command_events.begin(), command_events.end());
         }
-
         const Clock::time_point finished_at = Clock::now();
-        measurements.matcher_only_without_event_wal_seconds = seconds_between(started_at, finished_at);
-        return execution_events;
+
+        matched_events.measurement.elapsed_seconds = seconds_between(started_at, finished_at);
+        return matched_events;
     }
 
     /**
-     * @brief Writes already generated execution events to Event WAL and commits once.
+     * @brief Writes already generated execution events to Event WAL.
      */
-    bool measure_event_wal_append_and_commit(
+    bool measure_event_wal_append(
         const std::filesystem::path& event_wal_path,
         const std::vector<domain::ExecutionEventRecordV1>& execution_events,
-        BenchmarkMeasurements& measurements)
+        std::uint64_t commit_every,
+        PhaseMeasurement& measurement)
     {
         std::filesystem::remove(event_wal_path);
+        measurement.name = "event_wal_append";
 
         wal::WalSegmentWriter raw_event_writer{
             event_wal_path,
@@ -294,6 +392,7 @@ namespace
             raw_event_writer
         };
 
+        std::uint64_t records_since_commit = 0;
         const Clock::time_point started_at = Clock::now();
         for (const domain::ExecutionEventRecordV1& execution_event : execution_events) {
             const wal::WalAppendResult event_append_result = event_writer.append(execution_event);
@@ -302,32 +401,46 @@ namespace
                           << execution_event.event_sequence << '\n';
                 return false;
             }
-            ++measurements.event_wal_records_written;
+
+            ++measurement.event_count;
+            ++measurement.record_count;
+            ++records_since_commit;
+            if (!commit_if_interval_is_reached(
+                    event_writer,
+                    commit_every,
+                    records_since_commit,
+                    measurement,
+                    "event WAL commit failed")) {
+                return false;
+            }
         }
 
-        const wal::WalCommitResult event_commit_result = event_writer.commit();
-        if (event_commit_result.status != wal::WalCommitStatus::Committed) {
-            std::cerr << "event WAL commit failed\n";
+        if (!commit_remaining_records(
+                event_writer,
+                records_since_commit,
+                measurement,
+                "event WAL final commit failed")) {
             return false;
         }
-        ++measurements.event_wal_commits;
 
         const Clock::time_point finished_at = Clock::now();
-        measurements.event_wal_append_and_commit_seconds = seconds_between(started_at, finished_at);
-        measurements.event_wal_bytes = std::filesystem::file_size(event_wal_path);
+        measurement.elapsed_seconds = seconds_between(started_at, finished_at);
+        measurement.byte_count = file_size_or_zero(event_wal_path);
         return true;
     }
 
     /**
      * @brief Runs the actual read-command, match, append-event pipeline.
      */
-    bool measure_full_read_match_event_pipeline(
+    bool measure_read_match_event_pipeline(
         const std::filesystem::path& command_wal_path,
         const std::filesystem::path& event_wal_path,
         std::uint64_t expected_event_count,
-        BenchmarkMeasurements& measurements)
+        std::uint64_t commit_every,
+        PhaseMeasurement& measurement)
     {
         std::filesystem::remove(event_wal_path);
+        measurement.name = "read_match_event_pipeline";
 
         wal::WalSegmentReader raw_command_reader{command_wal_path};
         wal::TypedWalReader<domain::OrderCommandRecordV1, order_command_record_type> command_reader{
@@ -344,8 +457,7 @@ namespace
             raw_event_writer
         };
 
-        std::uint64_t commands_processed = 0;
-        std::uint64_t events_written = 0;
+        std::uint64_t records_since_commit = 0;
         core::InstrumentEngine engine{first_sequence};
 
         const Clock::time_point started_at = Clock::now();
@@ -357,11 +469,11 @@ namespace
             }
             if (command_read_result.status != wal::WalReadStatus::RecordRead) {
                 std::cerr << "command WAL pipeline read failed after "
-                          << commands_processed << " commands\n";
+                          << measurement.command_count << " commands\n";
                 return false;
             }
 
-            ++commands_processed;
+            ++measurement.command_count;
             std::vector<domain::ExecutionEventRecordV1> execution_events = engine.apply(command);
             for (const domain::ExecutionEventRecordV1& execution_event : execution_events) {
                 const wal::WalAppendResult event_append_result = event_writer.append(execution_event);
@@ -370,128 +482,141 @@ namespace
                               << execution_event.event_sequence << '\n';
                     return false;
                 }
-                ++events_written;
+
+                ++measurement.event_count;
+                ++measurement.record_count;
+                ++records_since_commit;
+                if (!commit_if_interval_is_reached(
+                        event_writer,
+                        commit_every,
+                        records_since_commit,
+                        measurement,
+                        "event WAL pipeline commit failed")) {
+                    return false;
+                }
             }
         }
 
-        const wal::WalCommitResult event_commit_result = event_writer.commit();
-        if (event_commit_result.status != wal::WalCommitStatus::Committed) {
-            std::cerr << "event WAL pipeline commit failed\n";
+        if (!commit_remaining_records(
+                event_writer,
+                records_since_commit,
+                measurement,
+                "event WAL pipeline final commit failed")) {
             return false;
         }
 
         const Clock::time_point finished_at = Clock::now();
-        if (events_written != expected_event_count) {
-            std::cerr << "pipeline emitted " << events_written
+        if (measurement.event_count != expected_event_count) {
+            std::cerr << "pipeline emitted " << measurement.event_count
                       << " events, expected " << expected_event_count << '\n';
             return false;
         }
 
-        measurements.read_match_event_pipeline_seconds = seconds_between(started_at, finished_at);
+        measurement.elapsed_seconds = seconds_between(started_at, finished_at);
+        measurement.byte_count = file_size_or_zero(event_wal_path);
         return true;
     }
 
-    /**
-     * @brief Prints a throughput line with stable formatting.
-     */
-    void print_rate(std::string_view label, std::uint64_t count, double seconds, std::string_view unit)
+    double rate_per_second(std::uint64_t count, double elapsed_seconds) noexcept
     {
-        const double rate = seconds > 0.0 ? static_cast<double>(count) / seconds : 0.0;
-        std::cout << std::left << std::setw(38) << label
-                  << std::right << std::setw(14) << count
-                  << std::setw(14) << std::fixed << std::setprecision(3) << seconds
-                  << std::setw(18) << std::fixed << std::setprecision(0) << rate
-                  << ' ' << unit << "/sec\n";
+        if (elapsed_seconds <= 0.0) {
+            return 0.0;
+        }
+        return static_cast<double>(count) / elapsed_seconds;
+    }
+
+    double ratio(std::uint64_t numerator, std::uint64_t denominator) noexcept
+    {
+        if (denominator == 0) {
+            return 0.0;
+        }
+        return static_cast<double>(numerator) / static_cast<double>(denominator);
+    }
+
+    void print_counter_table(const std::vector<PhaseMeasurement>& phases)
+    {
+        std::cout << "counters\n";
+        std::cout << std::left << std::setw(32) << "phase"
+                  << std::right << std::setw(12) << "commands"
+                  << std::setw(12) << "events"
+                  << std::setw(12) << "records"
+                  << std::setw(12) << "commits"
+                  << std::setw(14) << "bytes"
+                  << '\n';
+
+        for (const PhaseMeasurement& phase : phases) {
+            std::cout << std::left << std::setw(32) << phase.name
+                      << std::right << std::setw(12) << phase.command_count
+                      << std::setw(12) << phase.event_count
+                      << std::setw(12) << phase.record_count
+                      << std::setw(12) << phase.commit_count
+                      << std::setw(14) << phase.byte_count
+                      << '\n';
+        }
+    }
+
+    void print_timing_table(const std::vector<PhaseMeasurement>& phases)
+    {
+        std::cout << "phase timings\n";
+        std::cout << std::left << std::setw(32) << "phase"
+                  << std::right << std::setw(14) << "seconds"
+                  << std::setw(16) << "commands/sec"
+                  << std::setw(16) << "events/sec"
+                  << std::setw(16) << "records/sec"
+                  << '\n';
+
+        for (const PhaseMeasurement& phase : phases) {
+            std::cout << std::left << std::setw(32) << phase.name
+                      << std::right << std::setw(14) << std::fixed << std::setprecision(3) << phase.elapsed_seconds
+                      << std::setw(16) << std::fixed << std::setprecision(0)
+                      << rate_per_second(phase.command_count, phase.elapsed_seconds)
+                      << std::setw(16)
+                      << rate_per_second(phase.event_count, phase.elapsed_seconds)
+                      << std::setw(16)
+                      << rate_per_second(phase.record_count, phase.elapsed_seconds)
+                      << '\n';
+        }
+    }
+
+    void print_derived_ratio_table(const std::vector<PhaseMeasurement>& phases)
+    {
+        std::cout << "derived ratios\n";
+        std::cout << std::left << std::setw(32) << "phase"
+                  << std::right << std::setw(18) << "events/command"
+                  << std::setw(18) << "commits/command"
+                  << std::setw(18) << "records/commit"
+                  << std::setw(18) << "bytes/record"
+                  << '\n';
+
+        for (const PhaseMeasurement& phase : phases) {
+            std::cout << std::left << std::setw(32) << phase.name
+                      << std::right << std::setw(18) << std::fixed << std::setprecision(6)
+                      << ratio(phase.event_count, phase.command_count)
+                      << std::setw(18)
+                      << ratio(phase.commit_count, phase.command_count)
+                      << std::setw(18)
+                      << ratio(phase.record_count, phase.commit_count)
+                      << std::setw(18)
+                      << ratio(phase.byte_count, phase.record_count)
+                      << '\n';
+        }
     }
 
     /**
-     * @brief Prints a scalar metric with stable formatting.
+     * @brief Prints benchmark metrics without mixing counters between phases.
      */
-    void print_metric(std::string_view label, std::uint64_t value)
+    void print_measurements(const BenchmarkConfig& config, const std::vector<PhaseMeasurement>& phases)
     {
-        std::cout << std::left << std::setw(38) << label
-                  << std::right << value << '\n';
-    }
-
-    /**
-     * @brief Prints a ratio metric with stable formatting.
-     */
-    void print_ratio(std::string_view label, double value)
-    {
-        std::cout << std::left << std::setw(38) << label
-                  << std::right << std::fixed << std::setprecision(6) << value << '\n';
-    }
-
-    /**
-     * @brief Prints benchmark metrics for a completed benchmark run.
-     */
-    void print_measurements(const BenchmarkConfig& config, const BenchmarkMeasurements& measurements)
-    {
-        const double events_per_command =
-            measurements.commands_matched == 0
-                ? 0.0
-                : static_cast<double>(measurements.execution_events_emitted)
-                    / static_cast<double>(measurements.commands_matched);
-        const double event_commits_per_command =
-            measurements.commands_matched == 0
-                ? 0.0
-                : static_cast<double>(measurements.event_wal_commits)
-                    / static_cast<double>(measurements.commands_matched);
-        const double events_per_event_commit =
-            measurements.event_wal_commits == 0
-                ? 0.0
-                : static_cast<double>(measurements.event_wal_records_written)
-                    / static_cast<double>(measurements.event_wal_commits);
-
         std::cout << "load_pipeline_benchmark\n";
         std::cout << "commands_requested=" << config.command_count << '\n';
-        std::cout << "command_wal_bytes=" << measurements.command_wal_bytes << '\n';
-        std::cout << "event_wal_bytes=" << measurements.event_wal_bytes << '\n';
+        std::cout << "commit_every=" << config.commit_every << '\n';
         std::cout << '\n';
 
-        print_metric("generated_commands", measurements.generated_commands);
-        print_metric("command_wal_records_written", measurements.command_wal_records_written);
-        print_metric("command_wal_commits", measurements.command_wal_commits);
-        print_metric("command_wal_records_read", measurements.command_wal_records_read);
-        print_metric("commands_matched", measurements.commands_matched);
-        print_metric("execution_events_emitted", measurements.execution_events_emitted);
-        print_metric("event_wal_records_written", measurements.event_wal_records_written);
-        print_metric("event_wal_commits", measurements.event_wal_commits);
-        print_ratio("events_per_command", events_per_command);
-        print_ratio("event_commits_per_command", event_commits_per_command);
-        print_ratio("events_per_event_commit", events_per_event_commit);
+        print_counter_table(phases);
         std::cout << '\n';
-
-        std::cout << std::left << std::setw(38) << "phase"
-                  << std::right << std::setw(14) << "count"
-                  << std::setw(14) << "seconds"
-                  << std::setw(18) << "rate"
-                  << '\n';
-        print_rate(
-            "command_wal_write_and_commit",
-            measurements.command_wal_records_written,
-            measurements.command_wal_write_and_commit_seconds,
-            "commands");
-        print_rate(
-            "command_wal_read_only",
-            measurements.command_wal_records_read,
-            measurements.command_wal_read_only_seconds,
-            "commands");
-        print_rate(
-            "matcher_only_without_event_wal",
-            measurements.commands_matched,
-            measurements.matcher_only_without_event_wal_seconds,
-            "commands");
-        print_rate(
-            "event_wal_append_and_commit",
-            measurements.event_wal_records_written,
-            measurements.event_wal_append_and_commit_seconds,
-            "events");
-        print_rate(
-            "read_match_event_pipeline",
-            measurements.commands_matched,
-            measurements.read_match_event_pipeline_seconds,
-            "commands");
+        print_timing_table(phases);
+        std::cout << '\n';
+        print_derived_ratio_table(phases);
     }
 }
 
@@ -502,35 +627,60 @@ int main(int argc, char** argv)
         std::cerr << "command count must be greater than zero\n";
         return 1;
     }
+    if (!has_supported_commit_interval(config.commit_every)) {
+        std::cerr << "commit_every must be one of: 0, 1, 16, 64, 256, 1024\n";
+        return 1;
+    }
 
     std::filesystem::create_directories(config.output_directory);
     const BenchmarkPaths paths = make_paths(config);
-    std::vector<domain::OrderCommandRecordV1> commands = generate_commands(config.command_count);
 
-    BenchmarkMeasurements measurements;
-    measurements.generated_commands = commands.size();
+    std::vector<PhaseMeasurement> phases;
+    phases.reserve(6);
 
-    if (!write_command_wal(paths.command_wal, commands, measurements)) {
+    GeneratedCommands generated_commands = generate_commands(config.command_count);
+    phases.push_back(generated_commands.measurement);
+
+    PhaseMeasurement command_wal_write_measurement;
+    if (!write_command_wal(
+            paths.command_wal,
+            generated_commands.commands,
+            config.commit_every,
+            command_wal_write_measurement)) {
         return 2;
     }
-    if (!measure_command_wal_read_only(paths.command_wal, measurements)) {
+    phases.push_back(command_wal_write_measurement);
+
+    PhaseMeasurement command_wal_read_measurement;
+    if (!measure_command_wal_read_only(paths.command_wal, command_wal_read_measurement)) {
         return 3;
     }
+    phases.push_back(command_wal_read_measurement);
 
-    std::vector<domain::ExecutionEventRecordV1> execution_events =
-        measure_matcher_only(commands, measurements);
+    MatchedEvents matched_events = measure_matcher_only(generated_commands.commands);
+    phases.push_back(matched_events.measurement);
 
-    if (!measure_event_wal_append_and_commit(paths.phase_event_wal, execution_events, measurements)) {
+    PhaseMeasurement event_wal_append_measurement;
+    if (!measure_event_wal_append(
+            paths.phase_event_wal,
+            matched_events.events,
+            config.commit_every,
+            event_wal_append_measurement)) {
         return 4;
     }
-    if (!measure_full_read_match_event_pipeline(
+    phases.push_back(event_wal_append_measurement);
+
+    PhaseMeasurement read_match_event_pipeline_measurement;
+    if (!measure_read_match_event_pipeline(
             paths.command_wal,
             paths.event_wal,
-            execution_events.size(),
-            measurements)) {
+            matched_events.events.size(),
+            config.commit_every,
+            read_match_event_pipeline_measurement)) {
         return 5;
     }
+    phases.push_back(read_match_event_pipeline_measurement);
 
-    print_measurements(config, measurements);
+    print_measurements(config, phases);
     return 0;
 }

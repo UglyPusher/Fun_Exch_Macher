@@ -31,7 +31,7 @@ TradeExecuted emission, WAL write, WAL read, and event WAL write.
 Run after building:
 
 ```sh
-./build/load_pipeline_benchmark 100000 build/load_benchmark
+./build/load_pipeline_benchmark 100000 build/load_benchmark 0
 ```
 
 Arguments:
@@ -39,37 +39,48 @@ Arguments:
 ```text
 1. command count, optional, default 100000
 2. output directory for benchmark WAL files, optional, default benchmark_wal
+3. commit_every, optional, default 0
+```
+
+Supported `commit_every` values:
+
+```text
+1, 16, 64, 256, 1024
+0 means commit once at the end of each WAL write phase
 ```
 
 Read the result as a local estimate, not a product guarantee. Use the same build
 type and disk location when comparing changes.
 
-Reported counters:
+The benchmark prints separate tables for counters, timings, and derived ratios.
+Every row owns its own counters; for example, `read_match_event_pipeline`
+reports its own commands read, events written, Event WAL commits, and Event WAL
+bytes instead of reusing values from the matcher-only or event-WAL-only phases.
+
+Counter columns:
 
 ```text
-generated_commands
-command_wal_records_written
-command_wal_commits
-command_wal_records_read
-commands_matched
-execution_events_emitted
-event_wal_records_written
-event_wal_commits
-events_per_command
-event_commits_per_command
-events_per_event_commit
+phase
+command_count
+event_count
+record_count
+commit_count
+byte_count
 ```
 
-Reported timing sections:
+Measured phases:
 
 ```text
-command_wal_write_and_commit
+generate_commands
+command_wal_write
 command_wal_read_only
 matcher_only_without_event_wal
-event_wal_append_and_commit
+event_wal_append
 read_match_event_pipeline
 ```
 
 Use `matcher_only_without_event_wal` to estimate matcher cost. Use
 `read_match_event_pipeline` to estimate the current end-to-end read/match/event
-write path.
+write path. Compare `event_wal_append` and `read_match_event_pipeline` at
+different `commit_every` values to see how much commit frequency affects the
+manual benchmark on the current machine.
