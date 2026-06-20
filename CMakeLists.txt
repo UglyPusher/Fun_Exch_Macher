@@ -55,6 +55,13 @@ target_link_libraries(matching_engine_app PRIVATE
     matching_engine_projections
 )
 
+add_executable(load_pipeline_benchmark
+    benchmarks/load_pipeline_benchmark.cpp
+)
+target_link_libraries(load_pipeline_benchmark PRIVATE
+    matching_engine_core
+)
+
 add_custom_target(run
     COMMAND $<TARGET_FILE:matching_engine_app> run ${CMAKE_CURRENT_SOURCE_DIR}/examples/simple_session.txt ${CMAKE_CURRENT_BINARY_DIR}/wal/commands.wal ${CMAKE_CURRENT_BINARY_DIR}/wal/events.wal
     DEPENDS matching_engine_app

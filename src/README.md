@@ -33,3 +33,4 @@ order_book/     Reserved scaffold; the active order book is in core/.
 - `app` is allowed to wire modules together, but it should not own domain rules.
 
 See `../docs/CURRENT_STATE_DOCUMENTATION.md` for the current stage map.
+Manual throughput tools live in `../benchmarks/`.
