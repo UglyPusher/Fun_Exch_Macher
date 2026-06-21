@@ -12,18 +12,18 @@
 #include "domain/execution_event_record.hpp"
 #include "domain/order_command_record.hpp"
 #include "domain/record_types.hpp"
-#include "wal/typed_wal_reader.hpp"
-#include "wal/typed_wal_writer.hpp"
-#include "wal/wal_segment_reader.hpp"
-#include "wal/wal_segment_writer.hpp"
+#include "wal/wal.hpp"
 
 #include <chrono>
+#include <cstring>
 #include <cstdint>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <span>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 namespace
@@ -76,6 +76,47 @@ namespace
         std::vector<domain::ExecutionEventRecordV1> events;
         PhaseMeasurement measurement;
     };
+
+    template <typename TRecord>
+    wal::WalAppendResult append_storage_record(
+        wal::WalWriter& writer,
+        wal::RecordType record_type,
+        const TRecord& record)
+    {
+        static_assert(std::is_trivially_copyable_v<TRecord>);
+        const auto payload = std::as_bytes(std::span{&record, 1});
+        return writer.append_record(record_type, payload);
+    }
+
+    template <typename TRecord>
+    wal::WalReadResult read_storage_record(
+        wal::WalReader& reader,
+        wal::RecordType expected_record_type,
+        TRecord& record)
+    {
+        static_assert(std::is_trivially_copyable_v<TRecord>);
+
+        wal::WalRecord wal_record;
+        wal::WalReadResult read_result = reader.read_next_record(wal_record);
+        if (read_result.status != wal::WalReadStatus::RecordRead) {
+            return read_result;
+        }
+
+        if (wal_record.record_type != expected_record_type) {
+            read_result.status = wal::WalReadStatus::Failed;
+            read_result.error = wal::WalError::RecordTypeMismatch;
+            return read_result;
+        }
+
+        if (wal_record.payload.size() != sizeof(TRecord)) {
+            read_result.status = wal::WalReadStatus::Failed;
+            read_result.error = wal::WalError::PayloadSizeMismatch;
+            return read_result;
+        }
+
+        std::memcpy(&record, wal_record.payload.data(), sizeof(TRecord));
+        return read_result;
+    }
 
     /**
      * @brief Converts a measured duration into fractional seconds.
@@ -263,20 +304,18 @@ namespace
         std::filesystem::remove(command_wal_path);
         measurement.name = "command_wal_write";
 
-        wal::WalSegmentWriter raw_command_writer{
-            command_wal_path,
-            command_stream_id,
-            benchmark_epoch,
-            first_sequence
-        };
-        wal::TypedWalWriter<domain::OrderCommandRecordV1, order_command_record_type> command_writer{
-            raw_command_writer
-        };
+        wal::WalWriter command_writer{wal::WalWriterConfig{
+            .file_path = command_wal_path,
+            .stream_id = command_stream_id,
+            .epoch = benchmark_epoch,
+            .first_sequence = first_sequence
+        }};
 
         std::uint64_t records_since_commit = 0;
         const Clock::time_point started_at = Clock::now();
         for (const domain::OrderCommandRecordV1& command : commands) {
-            const wal::WalAppendResult append_result = command_writer.append(command);
+            const wal::WalAppendResult append_result =
+                append_storage_record(command_writer, order_command_record_type, command);
             if (append_result.status != wal::WalAppendStatus::Appended) {
                 std::cerr << "command WAL append failed at sequence "
                           << command.command_sequence << '\n';
@@ -319,15 +358,13 @@ namespace
     {
         measurement.name = "command_wal_read_only";
 
-        wal::WalSegmentReader raw_command_reader{command_wal_path};
-        wal::TypedWalReader<domain::OrderCommandRecordV1, order_command_record_type> command_reader{
-            raw_command_reader
-        };
+        wal::WalReader command_reader{wal::WalReaderConfig{.file_path = command_wal_path}};
 
         const Clock::time_point started_at = Clock::now();
         while (true) {
             domain::OrderCommandRecordV1 command{};
-            const wal::WalReadResult command_read_result = command_reader.read_next(command);
+            const wal::WalReadResult command_read_result =
+                read_storage_record(command_reader, order_command_record_type, command);
             if (command_read_result.status == wal::WalReadStatus::EndOfLog) {
                 break;
             }
@@ -382,20 +419,18 @@ namespace
         std::filesystem::remove(event_wal_path);
         measurement.name = "event_wal_append";
 
-        wal::WalSegmentWriter raw_event_writer{
-            event_wal_path,
-            event_stream_id,
-            benchmark_epoch,
-            first_sequence
-        };
-        wal::TypedWalWriter<domain::ExecutionEventRecordV1, execution_event_record_type> event_writer{
-            raw_event_writer
-        };
+        wal::WalWriter event_writer{wal::WalWriterConfig{
+            .file_path = event_wal_path,
+            .stream_id = event_stream_id,
+            .epoch = benchmark_epoch,
+            .first_sequence = first_sequence
+        }};
 
         std::uint64_t records_since_commit = 0;
         const Clock::time_point started_at = Clock::now();
         for (const domain::ExecutionEventRecordV1& execution_event : execution_events) {
-            const wal::WalAppendResult event_append_result = event_writer.append(execution_event);
+            const wal::WalAppendResult event_append_result =
+                append_storage_record(event_writer, execution_event_record_type, execution_event);
             if (event_append_result.status != wal::WalAppendStatus::Appended) {
                 std::cerr << "event WAL append failed at event sequence "
                           << execution_event.event_sequence << '\n';
@@ -442,20 +477,14 @@ namespace
         std::filesystem::remove(event_wal_path);
         measurement.name = "read_match_event_pipeline";
 
-        wal::WalSegmentReader raw_command_reader{command_wal_path};
-        wal::TypedWalReader<domain::OrderCommandRecordV1, order_command_record_type> command_reader{
-            raw_command_reader
-        };
+        wal::WalReader command_reader{wal::WalReaderConfig{.file_path = command_wal_path}};
 
-        wal::WalSegmentWriter raw_event_writer{
-            event_wal_path,
-            event_stream_id,
-            benchmark_epoch,
-            first_sequence
-        };
-        wal::TypedWalWriter<domain::ExecutionEventRecordV1, execution_event_record_type> event_writer{
-            raw_event_writer
-        };
+        wal::WalWriter event_writer{wal::WalWriterConfig{
+            .file_path = event_wal_path,
+            .stream_id = event_stream_id,
+            .epoch = benchmark_epoch,
+            .first_sequence = first_sequence
+        }};
 
         std::uint64_t records_since_commit = 0;
         core::InstrumentEngine engine{first_sequence};
@@ -463,7 +492,8 @@ namespace
         const Clock::time_point started_at = Clock::now();
         while (true) {
             domain::OrderCommandRecordV1 command{};
-            const wal::WalReadResult command_read_result = command_reader.read_next(command);
+            const wal::WalReadResult command_read_result =
+                read_storage_record(command_reader, order_command_record_type, command);
             if (command_read_result.status == wal::WalReadStatus::EndOfLog) {
                 break;
             }
@@ -476,7 +506,8 @@ namespace
             ++measurement.command_count;
             std::vector<domain::ExecutionEventRecordV1> execution_events = engine.apply(command);
             for (const domain::ExecutionEventRecordV1& execution_event : execution_events) {
-                const wal::WalAppendResult event_append_result = event_writer.append(execution_event);
+                const wal::WalAppendResult event_append_result =
+                    append_storage_record(event_writer, execution_event_record_type, execution_event);
                 if (event_append_result.status != wal::WalAppendStatus::Appended) {
                     std::cerr << "event WAL pipeline append failed at event sequence "
                               << execution_event.event_sequence << '\n';

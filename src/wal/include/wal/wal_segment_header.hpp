@@ -5,7 +5,8 @@
  * @brief Fixed binary header stored at the beginning of a WAL segment.
  *
  * The segment header identifies the stream epoch and first sequence in a file.
- * It must stay independent from the payload types stored after it.
+ * It must stay independent from the payload types stored after it. This is an
+ * internal WAL-v0 implementation detail; normal users should include wal/wal.hpp.
  */
 
 #include "wal/wal_types.hpp"

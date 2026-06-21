@@ -6,7 +6,9 @@
  *
  * The scanner finds the last valid record boundary. An incomplete trailing
  * record is recoverable crash residue. A complete but invalid record, header,
- * sequence, or CRC is corruption even when it is physically at the tail.
+ * sequence, or CRC is corruption even when it is physically at the tail. This
+ * is an internal WAL-v0 implementation detail; normal users should include
+ * wal/wal.hpp.
  */
 
 #include "wal/wal_result.hpp"

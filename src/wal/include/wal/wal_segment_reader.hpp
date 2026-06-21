@@ -6,7 +6,8 @@
  *
  * The reader exposes records only after segment header, record header, payload
  * checksum, and sequence checks pass. It must not interpret payload bytes as
- * domain records.
+ * domain records. This is an internal WAL-v0 implementation detail; normal
+ * users should include wal/wal.hpp.
  */
 
 #include "wal/raw_wal_reader.hpp"

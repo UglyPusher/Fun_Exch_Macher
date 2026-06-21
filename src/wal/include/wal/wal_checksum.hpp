@@ -5,7 +5,8 @@
  * @brief CRC32 helper used by WAL headers and payload validation.
  *
  * Checksums are physical integrity checks. They do not prove that payload bytes
- * are semantically valid domain records.
+ * are semantically valid domain records. This is an internal WAL-v0
+ * implementation detail; normal users should include wal/wal.hpp.
  */
 
 #include <cstddef>

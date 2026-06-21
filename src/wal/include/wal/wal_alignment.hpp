@@ -5,7 +5,8 @@
  * @brief Alignment helpers for binary WAL record layout.
  *
  * WAL records are padded to a fixed boundary so readers can move from one
- * validated record to the next without domain-specific parsing.
+ * validated record to the next without domain-specific parsing. This is an
+ * internal WAL-v0 implementation detail; normal users should include wal/wal.hpp.
  */
 
 #include <cstdint>

@@ -84,6 +84,14 @@ target_link_libraries(load_pipeline_benchmark PRIVATE
 )
 configure_matching_engine_warnings(load_pipeline_benchmark)
 
+add_executable(wal_demo
+    examples/wal_demo.cpp
+)
+target_link_libraries(wal_demo PRIVATE
+    matching_engine_wal
+)
+configure_matching_engine_warnings(wal_demo)
+
 add_custom_target(run
     COMMAND $<TARGET_FILE:matching_engine_app> run ${CMAKE_CURRENT_SOURCE_DIR}/examples/simple_session.txt ${CMAKE_CURRENT_BINARY_DIR}/wal/commands.wal ${CMAKE_CURRENT_BINARY_DIR}/wal/events.wal
     DEPENDS matching_engine_app
@@ -138,3 +146,4 @@ add_matching_engine_test(wal_segment_reader_tests tests/wal/wal_segment_reader_t
 add_matching_engine_test(wal_recovery_tests tests/wal/wal_recovery_tests.cpp)
 add_matching_engine_test(typed_wal_tests tests/wal/typed_wal_tests.cpp)
 add_matching_engine_test(wal_checksum_tests tests/wal/wal_checksum_tests.cpp)
+add_matching_engine_test(wal_facade_tests tests/wal/wal_facade_tests.cpp)

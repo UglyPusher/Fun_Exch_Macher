@@ -6,7 +6,8 @@
  *
  * The record header owns physical metadata: record type, stream identity,
  * sequence, payload length, and checksums. It must not encode domain-level
- * validity.
+ * validity. This is an internal WAL-v0 implementation detail; normal users
+ * should include wal/wal.hpp.
  */
 
 #include "wal/wal_types.hpp"

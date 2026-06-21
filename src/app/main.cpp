@@ -13,14 +13,14 @@
 #include "core/replay.hpp"
 #include "domain/record_types.hpp"
 #include "projections/market_data_projection.hpp"
-#include "wal/typed_wal_reader.hpp"
-#include "wal/typed_wal_writer.hpp"
-#include "wal/wal_segment_reader.hpp"
-#include "wal/wal_segment_writer.hpp"
+#include "wal/wal.hpp"
 
+#include <cstring>
 #include <filesystem>
 #include <iostream>
+#include <span>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace
@@ -32,17 +32,58 @@ namespace
     constexpr wal::EpochId epoch = 1;
     constexpr wal::SequenceNumber first_sequence = 1;
 
+    template <typename TRecord>
+    wal::WalAppendResult append_storage_record(
+        wal::WalWriter& writer,
+        wal::RecordType record_type,
+        const TRecord& record)
+    {
+        static_assert(std::is_trivially_copyable_v<TRecord>);
+        const auto payload = std::as_bytes(std::span{&record, 1});
+        return writer.append_record(record_type, payload);
+    }
+
+    template <typename TRecord>
+    wal::WalReadResult read_storage_record(
+        wal::WalReader& reader,
+        wal::RecordType expected_record_type,
+        TRecord& record)
+    {
+        static_assert(std::is_trivially_copyable_v<TRecord>);
+
+        wal::WalRecord wal_record;
+        wal::WalReadResult read_result = reader.read_next_record(wal_record);
+        if (read_result.status != wal::WalReadStatus::RecordRead) {
+            return read_result;
+        }
+
+        if (wal_record.record_type != expected_record_type) {
+            read_result.status = wal::WalReadStatus::Failed;
+            read_result.error = wal::WalError::RecordTypeMismatch;
+            return read_result;
+        }
+
+        if (wal_record.payload.size() != sizeof(TRecord)) {
+            read_result.status = wal::WalReadStatus::Failed;
+            read_result.error = wal::WalError::PayloadSizeMismatch;
+            return read_result;
+        }
+
+        std::memcpy(&record, wal_record.payload.data(), sizeof(TRecord));
+        return read_result;
+    }
+
     class WalCommandReplayReader final : public core::CommandLogReader
     {
     public:
-        explicit WalCommandReplayReader(wal::TypedWalReader<domain::OrderCommandRecordV1, order_command_record_type>& reader)
+        explicit WalCommandReplayReader(wal::WalReader& reader)
             : reader_(reader)
         {
         }
 
         core::ReplayCommandReadResult read_next(domain::OrderCommandRecordV1& command) override
         {
-            const auto result = reader_.read_next(command);
+            const auto result = read_storage_record(reader_, order_command_record_type, command);
             if (result.status == wal::WalReadStatus::RecordRead) {
                 return {.status = core::ReplayReadStatus::RecordRead};
             }
@@ -53,20 +94,20 @@ namespace
         }
 
     private:
-        wal::TypedWalReader<domain::OrderCommandRecordV1, order_command_record_type>& reader_;
+        wal::WalReader& reader_;
     };
 
     class WalEventReplayReader final : public core::EventLogReader
     {
     public:
-        explicit WalEventReplayReader(wal::TypedWalReader<domain::ExecutionEventRecordV1, execution_event_record_type>& reader)
+        explicit WalEventReplayReader(wal::WalReader& reader)
             : reader_(reader)
         {
         }
 
         core::ReplayEventReadResult read_next(domain::ExecutionEventRecordV1& event) override
         {
-            const auto result = reader_.read_next(event);
+            const auto result = read_storage_record(reader_, execution_event_record_type, event);
             if (result.status == wal::WalReadStatus::RecordRead) {
                 return {.status = core::ReplayReadStatus::RecordRead};
             }
@@ -77,7 +118,7 @@ namespace
         }
 
     private:
-        wal::TypedWalReader<domain::ExecutionEventRecordV1, execution_event_record_type>& reader_;
+        wal::WalReader& reader_;
     };
 
     void print_usage()
@@ -109,11 +150,15 @@ namespace
         std::filesystem::create_directories(path.parent_path().empty() ? "." : path.parent_path());
         std::filesystem::remove(path);
 
-        wal::WalSegmentWriter raw_writer{path, command_stream_id, epoch, commands.empty() ? first_sequence : commands.front().command_sequence};
-        wal::TypedWalWriter<domain::OrderCommandRecordV1, order_command_record_type> writer{raw_writer};
+        wal::WalWriter writer{wal::WalWriterConfig{
+            .file_path = path,
+            .stream_id = command_stream_id,
+            .epoch = epoch,
+            .first_sequence = commands.empty() ? first_sequence : commands.front().command_sequence
+        }};
 
         for (const auto& command : commands) {
-            const auto append = writer.append(command);
+            const auto append = append_storage_record(writer, order_command_record_type, command);
             if (append.status != wal::WalAppendStatus::Appended) {
                 return false;
             }
@@ -133,11 +178,15 @@ namespace
         std::filesystem::create_directories(path.parent_path().empty() ? "." : path.parent_path());
         std::filesystem::remove(path);
 
-        wal::WalSegmentWriter raw_writer{path, event_stream_id, epoch, events.empty() ? first_sequence : events.front().event_sequence};
-        wal::TypedWalWriter<domain::ExecutionEventRecordV1, execution_event_record_type> writer{raw_writer};
+        wal::WalWriter writer{wal::WalWriterConfig{
+            .file_path = path,
+            .stream_id = event_stream_id,
+            .epoch = epoch,
+            .first_sequence = events.empty() ? first_sequence : events.front().event_sequence
+        }};
 
         for (const auto& event : events) {
-            const auto append = writer.append(event);
+            const auto append = append_storage_record(writer, execution_event_record_type, event);
             if (append.status != wal::WalAppendStatus::Appended) {
                 return false;
             }
@@ -166,12 +215,10 @@ namespace
 
     int replay_wals(const std::filesystem::path& command_wal, const std::filesystem::path& event_wal)
     {
-        wal::WalSegmentReader command_raw_reader{command_wal};
-        wal::TypedWalReader<domain::OrderCommandRecordV1, order_command_record_type> command_reader{command_raw_reader};
+        wal::WalReader command_reader{wal::WalReaderConfig{.file_path = command_wal}};
         WalCommandReplayReader replay_command_reader{command_reader};
 
-        wal::WalSegmentReader event_raw_reader{event_wal};
-        wal::TypedWalReader<domain::ExecutionEventRecordV1, execution_event_record_type> event_reader{event_raw_reader};
+        wal::WalReader event_reader{wal::WalReaderConfig{.file_path = event_wal}};
         WalEventReplayReader replay_event_reader{event_reader};
 
         core::InstrumentEngine engine{first_sequence};
@@ -259,12 +306,11 @@ namespace
             return 1;
         }
 
-        wal::WalSegmentReader raw_reader{argv[2]};
-        wal::TypedWalReader<domain::ExecutionEventRecordV1, execution_event_record_type> reader{raw_reader};
+        wal::WalReader reader{wal::WalReaderConfig{.file_path = argv[2]}};
 
         while (true) {
             domain::ExecutionEventRecordV1 event{};
-            const auto read = reader.read_next(event);
+            const auto read = read_storage_record(reader, execution_event_record_type, event);
             if (read.status == wal::WalReadStatus::EndOfLog) {
                 break;
             }
@@ -282,12 +328,11 @@ namespace
         projections::MarketDataProjection& projection,
         const std::filesystem::path& event_wal)
     {
-        wal::WalSegmentReader raw_reader{event_wal};
-        wal::TypedWalReader<domain::ExecutionEventRecordV1, execution_event_record_type> reader{raw_reader};
+        wal::WalReader reader{wal::WalReaderConfig{.file_path = event_wal}};
 
         while (true) {
             domain::ExecutionEventRecordV1 event{};
-            const auto read = reader.read_next(event);
+            const auto read = read_storage_record(reader, execution_event_record_type, event);
             if (read.status == wal::WalReadStatus::EndOfLog) {
                 return true;
             }

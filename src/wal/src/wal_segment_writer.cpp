@@ -27,6 +27,11 @@ namespace wal
           next_sequence_(first_sequence)
     {
         WalFile::ensure_parent_directory_exists(file_path_);
+        if (std::filesystem::is_directory(file_path_)) {
+            fail_writer(WalError::CannotWriteFile);
+            return;
+        }
+
         const auto should_write_header = !WalFile::exists(file_path_) || WalFile::size(file_path_) == 0;
 
         if (!should_write_header) {

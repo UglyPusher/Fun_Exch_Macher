@@ -5,10 +5,10 @@ The WAL subsystem is the storage integrity boundary for the matching engine.
 It is deliberately small, binary, payload-agnostic, and strict. Its job is not to understand trading commands. Its job is to preserve ordered bytes, prove that those bytes are intact before exposing them, and give upper layers enough metadata to stop, replay, or rebuild streams safely.
 
 ```text
-Domain DTO
-    v typed adapter
-Raw WAL API
-    v segment reader/writer/scanner
+Normal user
+    v wal/wal.hpp facade
+Internal segment implementation
+    v headers / CRC / padding / scanner
 Binary segment file
 ```
 
@@ -30,8 +30,8 @@ raw bytes on disk
     -> record header validation
     -> payload checksum validation
     -> sequence validation
-    -> validated WalRecordView
-    -> typed DTO boundary
+    -> facade WalRecord
+    -> caller DTO boundary
     -> matcher / replay / consumers
 ```
 
@@ -44,8 +44,10 @@ If integrity cannot be proven, the reader fails closed.
 - `stream_id + epoch + sequence` is the record identity.
 - CRC mismatch means "not a valid record".
 - Incomplete tail and corrupted middle are different failures.
-- Raw reader validates physical integrity before exposing payload bytes.
-- Typed reader validates DTO boundary before `memcpy`.
+- Normal users include `wal/wal.hpp`.
+- Segment readers, writers, scanners, headers, CRC, and padding are internal.
+- The facade exposes validated payload bytes without exposing header layout.
+- Callers validate their own DTO boundary before `memcpy`.
 - Domain/matcher code must not repair WAL corruption.
 - Recovery is explicit; no silent skip, no heuristic resync.
 
@@ -59,8 +61,9 @@ Implemented in this prototype:
 - 8-byte record alignment;
 - CRC32 for segment header, record header, and payload;
 - stream/epoch/sequence validation;
-- raw reader/writer APIs;
-- typed read/write adapters for trivially-copyable DTOs;
+- public `wal/wal.hpp` facade;
+- internal raw reader/writer APIs;
+- internal typed read/write adapters for trivially-copyable DTO tests;
 - segment scanner for recovery decisions;
 - writer reopen handling for existing segments;
 - truncation of incomplete trailing records on writer reopen;
@@ -89,7 +92,13 @@ src/wal/
 `-- CMakeLists.txt            WAL library target
 ```
 
-Important headers:
+Public header:
+
+```text
+wal.hpp                       WAL-v0 facade for normal users
+```
+
+Internal implementation headers:
 
 ```text
 wal_types.hpp                 StreamId, EpochId, SequenceNumber, constants
@@ -109,8 +118,13 @@ wal_segment_scanner.hpp       recovery scanner
 wal_checksum.hpp              CRC32
 wal_alignment.hpp             alignment helpers
 wal_file.hpp                  filesystem helpers
-wal.hpp                       umbrella include
 ```
+
+Normal app, benchmark, replay, and demo code should not include the internal
+headers above. They exist for WAL implementation files and focused WAL tests.
+
+See `../../docs/wal_facade.md` for the public API, guarantees, limitations,
+recovery policy, and demo usage.
 
 ## Layer Model
 
@@ -121,16 +135,15 @@ wal.hpp                       umbrella include
 +--------------^--------------+
                |
 +--------------|--------------+
-| Typed WAL adapter           |
-| validates record type       |
-| validates sizeof(TRecord)   |
-| memcpy only after raw pass   |
+| Public WAL facade           |
+| append/read record payload  |
+| scan/recover segment tail   |
 +--------------^--------------+
                |
 +--------------|--------------+
-| Raw WAL API                 |
-| append/read commit results  |
-| no domain semantics         |
+| Internal raw WAL API        |
+| concrete segment IO         |
+| header / CRC / padding      |
 +--------------^--------------+
                |
 +--------------|--------------+

@@ -7,7 +7,8 @@
  * The writer owns segment creation/reopen, record sequencing, checksums,
  * alignment, and pending-to-committed position tracking. After any write or
  * flush failure the writer enters a failed state and must not be reused. It
- * must not inspect business fields inside payload bytes.
+ * must not inspect business fields inside payload bytes. This is an internal
+ * WAL-v0 implementation detail; normal users should include wal/wal.hpp.
  */
 
 #include "wal/raw_wal_writer.hpp"

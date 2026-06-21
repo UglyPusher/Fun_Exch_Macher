@@ -99,6 +99,7 @@ Detailed design notes live in:
 - `docs/architecture/current_architecture.md`
 - `docs/architecture/expected_architecture.md`
 - `docs/wal.md`
+- `docs/wal_facade.md`
 - `docs/matching_rules.md`
 - `docs/replay.md`
 - `src/README.md`
