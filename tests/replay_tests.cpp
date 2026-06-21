@@ -242,6 +242,20 @@ namespace
             && result.failure.actual_event.has_value();
     }
 
+    bool Replay_fails_when_source_ingress_epoch_differs()
+    {
+        const std::vector commands{
+            new_order(1, 1, core::Side::Buy, 1000, 5)
+        };
+        auto events = generate_events(commands);
+        events[0].source_ingress_epoch += 1;
+
+        const auto result = replay(commands, events);
+        return !result.ok
+            && result.failure.failure_class == core::ReplayFailureClass::EventFieldMismatch
+            && result.failure.field == core::EventField::SourceIngressEpoch;
+    }
+
     bool Replay_fails_when_event_order_differs()
     {
         const std::vector commands{
@@ -355,29 +369,32 @@ int main()
     if (!Replay_fails_when_event_field_differs()) {
         return 9;
     }
-    if (!Replay_fails_when_event_order_differs()) {
+    if (!Replay_fails_when_source_ingress_epoch_differs()) {
         return 10;
     }
-    if (!Replay_fails_when_command_sequence_breaks()) {
+    if (!Replay_fails_when_event_order_differs()) {
         return 11;
     }
-    if (!Replay_cancel_existing_ok()) {
+    if (!Replay_fails_when_command_sequence_breaks()) {
         return 12;
     }
-    if (!Replay_cancel_unknown_ok()) {
+    if (!Replay_cancel_existing_ok()) {
         return 13;
     }
-    if (!Replay_cancel_then_aggressive_order_does_not_match_cancelled_order()) {
+    if (!Replay_cancel_unknown_ok()) {
         return 14;
     }
-    if (!Replay_replace_existing_ok()) {
+    if (!Replay_cancel_then_aggressive_order_does_not_match_cancelled_order()) {
         return 15;
     }
-    if (!Replay_replace_unknown_ok()) {
+    if (!Replay_replace_existing_ok()) {
         return 16;
     }
-    if (!Replay_replace_then_aggressive_order_matches_replacement()) {
+    if (!Replay_replace_unknown_ok()) {
         return 17;
+    }
+    if (!Replay_replace_then_aggressive_order_matches_replacement()) {
+        return 18;
     }
 
     return 0;

@@ -1,109 +1,27 @@
 {
-  "version": 6,
-  "cmakeMinimumRequired": {
-    "major": 3,
-    "minor": 25,
-    "patch": 0
-  },
-  "configurePresets": [
-    {
-      "name": "debug",
-      "displayName": "Debug",
-      "description": "Local debug build",
-      "generator": "Unix Makefiles",
-      "binaryDir": "${sourceDir}/build/debug",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
-      }
-    },
-    {
-      "name": "release",
-      "displayName": "Release",
-      "description": "Optimized release build",
-      "generator": "Unix Makefiles",
-      "binaryDir": "${sourceDir}/build/release",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
-      }
-    }
-  ],
-  "buildPresets": [
-    {
-      "name": "debug",
-      "displayName": "Build Debug",
-      "configurePreset": "debug"
-    },
-    {
-      "name": "release",
-      "displayName": "Build Release",
-      "configurePreset": "release"
-    },
-    {
-      "name": "run",
-      "displayName": "Run Debug App",
-      "configurePreset": "debug",
-      "targets": ["run"]
-    },
-    {
-      "name": "debug-run",
-      "displayName": "Debug App With GDB",
-      "configurePreset": "debug",
-      "targets": ["debug"]
-    }
-  ],
-  "testPresets": [
-    {
-      "name": "debug",
-      "displayName": "Test Debug",
-      "configurePreset": "debug",
-      "output": {
-        "outputOnFailure": true
-      }
-    },
-    {
-      "name": "release",
-      "displayName": "Test Release",
-      "configurePreset": "release",
-      "output": {
-        "outputOnFailure": true
-      }
-    }
-  ],
-  "workflowPresets": [
-    {
-      "name": "build",
-      "displayName": "Configure And Build Debug",
-      "steps": [
-        {"type": "configure", "name": "debug"},
-        {"type": "build", "name": "debug"}
-      ]
-    },
-    {
-      "name": "test",
-      "displayName": "Configure, Build, And Test Debug",
-      "steps": [
-        {"type": "configure", "name": "debug"},
-        {"type": "build", "name": "debug"},
-        {"type": "test", "name": "debug"}
-      ]
-    },
-    {
-      "name": "run",
-      "displayName": "Configure And Run Debug App",
-      "steps": [
-        {"type": "configure", "name": "debug"},
-        {"type": "build", "name": "run"}
-      ]
-    },
-    {
-      "name": "debug",
-      "displayName": "Configure And Debug App",
-      "steps": [
-        {"type": "configure", "name": "debug"},
-        {"type": "build", "name": "debug-run"}
-      ]
-    }
-  ]
+    "version": 8,
+    "configurePresets": [
+        {
+            "name": "Build",
+            "displayName": "Visual Studio Community 2022 Release - x86_amd64",
+            "description": "Using compilers for Visual Studio 17 2022 (x86_x64 architecture)",
+            "generator": "Visual Studio 17 2022",
+            "toolset": "host=x86",
+            "architecture": "x64",
+            "binaryDir": "${sourceDir}/../build/${presetName}",
+            "cacheVariables": {
+                "CMAKE_INSTALL_PREFIX": "${sourceDir}/../install/${presetName}",
+                "CMAKE_C_COMPILER": "cl.exe",
+                "CMAKE_CXX_COMPILER": "cl.exe"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "Build-debug",
+            "displayName": "Visual Studio Community 2022 Release - x86_amd64 - Debug",
+            "configurePreset": "Build",
+            "configuration": "Debug"
+        }
+    ]
 }

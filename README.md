@@ -38,7 +38,8 @@ Implemented now:
 Not implemented yet:
 
 - Ingress normalizer/router and per-instrument command streams.
-- Risk, reservation, portfolio, accounting, snapshots, fsync/fdatasync durability policy, batch commit recovery contract, and multi-segment rotation.
+- Self-trade prevention.
+- Accounts, balances, reservation, risk checks, portfolio, accounting, futures, margin, liquidation, snapshots, fsync/fdatasync durability policy, batch commit recovery contract, and multi-segment rotation.
 
 ## Architecture Direction
 
@@ -273,6 +274,8 @@ Out of scope for the first prototype:
 - Market data protocol.
 - Database persistence.
 - Risk engine and portfolio accounting.
+- Accounts, balances, futures, margin, and liquidation.
+- Self-trade prevention.
 - Clustering, failover, consensus, and replicated durability.
 - Advanced order types.
 - Batch matching and Event WAL batch commit.

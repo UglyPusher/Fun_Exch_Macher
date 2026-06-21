@@ -4,8 +4,9 @@
  * @file wal_segment_scanner.hpp
  * @brief Recovery scanner for existing WAL segment files.
  *
- * The scanner finds the last valid record boundary and distinguishes a valid
- * torn tail from corruption in the middle of a segment.
+ * The scanner finds the last valid record boundary. An incomplete trailing
+ * record is recoverable crash residue. A complete but invalid record, header,
+ * sequence, or CRC is corruption even when it is physically at the tail.
  */
 
 #include "wal/wal_result.hpp"

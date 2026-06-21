@@ -9,7 +9,24 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+option(MATCHING_ENGINE_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
+
+function(configure_matching_engine_warnings target)
+    target_compile_options(${target} PRIVATE
+        $<$<CXX_COMPILER_ID:MSVC>:/W4 /permissive->
+        $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>
+    )
+
+    if(MATCHING_ENGINE_WARNINGS_AS_ERRORS)
+        target_compile_options(${target} PRIVATE
+            $<$<CXX_COMPILER_ID:MSVC>:/WX>
+            $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Werror>
+        )
+    endif()
+endfunction()
+
 add_subdirectory(src/wal)
+configure_matching_engine_warnings(wal)
 
 add_library(matching_engine_domain
     src/domain/src/record_types.cpp
@@ -17,6 +34,7 @@ add_library(matching_engine_domain
 target_include_directories(matching_engine_domain PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/domain/include
 )
+configure_matching_engine_warnings(matching_engine_domain)
 
 add_library(matching_engine_core
     src/core/src/dummy_instrument_engine.cpp
@@ -31,6 +49,7 @@ target_link_libraries(matching_engine_core PUBLIC
     matching_engine_domain
     matching_engine_wal
 )
+configure_matching_engine_warnings(matching_engine_core)
 
 add_library(matching_engine_projections
     src/projections/src/market_data_projection.cpp
@@ -41,6 +60,7 @@ target_include_directories(matching_engine_projections PUBLIC
 target_link_libraries(matching_engine_projections PUBLIC
     matching_engine_domain
 )
+configure_matching_engine_warnings(matching_engine_projections)
 
 add_executable(matching_engine_app
     src/app/event_dump.cpp
@@ -54,6 +74,7 @@ target_link_libraries(matching_engine_app PRIVATE
     matching_engine_core
     matching_engine_projections
 )
+configure_matching_engine_warnings(matching_engine_app)
 
 add_executable(load_pipeline_benchmark
     benchmarks/load_pipeline_benchmark.cpp
@@ -61,6 +82,7 @@ add_executable(load_pipeline_benchmark
 target_link_libraries(load_pipeline_benchmark PRIVATE
     matching_engine_core
 )
+configure_matching_engine_warnings(load_pipeline_benchmark)
 
 add_custom_target(run
     COMMAND $<TARGET_FILE:matching_engine_app> run ${CMAKE_CURRENT_SOURCE_DIR}/examples/simple_session.txt ${CMAKE_CURRENT_BINARY_DIR}/wal/commands.wal ${CMAKE_CURRENT_BINARY_DIR}/wal/events.wal
@@ -93,12 +115,14 @@ enable_testing()
 function(add_matching_engine_test target source)
     add_executable(${target} ${source})
     target_link_libraries(${target} PRIVATE matching_engine_core)
+    configure_matching_engine_warnings(${target})
     add_test(NAME ${target} COMMAND ${target})
 endfunction()
 
 function(add_matching_engine_projection_test target source)
     add_executable(${target} ${source})
     target_link_libraries(${target} PRIVATE matching_engine_projections)
+    configure_matching_engine_warnings(${target})
     add_test(NAME ${target} COMMAND ${target})
 endfunction()
 

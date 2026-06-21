@@ -30,8 +30,8 @@ namespace wal
         const auto should_write_header = !WalFile::exists(file_path_) || WalFile::size(file_path_) == 0;
 
         if (!should_write_header) {
-            open_error_ = prepare_existing_segment(first_sequence);
-            if (open_error_ != WalError::None) {
+            writer_error_ = prepare_existing_segment(first_sequence);
+            if (writer_error_ != WalError::None) {
                 return;
             }
         }
@@ -40,7 +40,7 @@ namespace wal
         if (should_write_header) {
             write_segment_header();
             if (!file_) {
-                open_error_ = WalError::CannotWriteFile;
+                fail_writer(WalError::CannotWriteFile);
             }
         }
     }
@@ -56,11 +56,12 @@ namespace wal
         RecordType record_type,
         std::span<const std::byte> payload)
     {
-        if (open_error_ != WalError::None) {
-            return {.status = WalAppendStatus::Failed, .error = open_error_, .position = last_position_};
+        if (writer_error_ != WalError::None) {
+            return {.status = WalAppendStatus::Failed, .error = writer_error_, .position = last_position_};
         }
 
         if (!file_) {
+            fail_writer(WalError::CannotWriteFile);
             return {.status = WalAppendStatus::Failed, .error = WalError::CannotWriteFile, .position = last_position_};
         }
 
@@ -69,13 +70,14 @@ namespace wal
 
     WalCommitResult WalSegmentWriter::commit()
     {
-        if (open_error_ != WalError::None) {
-            return {.status = WalCommitStatus::Failed, .error = open_error_, .committed_up_to = last_position_};
+        if (writer_error_ != WalError::None) {
+            return {.status = WalCommitStatus::Failed, .error = writer_error_, .committed_up_to = last_position_};
         }
 
         file_.flush();
 
         if (!file_) {
+            fail_writer(WalError::CannotFlushFile);
             return {.status = WalCommitStatus::Failed, .error = WalError::CannotFlushFile, .committed_up_to = last_position_};
         }
 
@@ -142,6 +144,7 @@ namespace wal
         }
 
         if (!file_) {
+            fail_writer(WalError::CannotWriteFile);
             return {.status = WalAppendStatus::Failed, .error = WalError::CannotWriteFile, .position = last_position_};
         }
 
@@ -234,5 +237,12 @@ namespace wal
         };
         header.header_crc = calculate_segment_header_crc(header);
         file_.write(reinterpret_cast<const char*>(&header), sizeof(header));
+    }
+
+    void WalSegmentWriter::fail_writer(WalError error) noexcept
+    {
+        if (writer_error_ == WalError::None) {
+            writer_error_ = error;
+        }
     }
 }

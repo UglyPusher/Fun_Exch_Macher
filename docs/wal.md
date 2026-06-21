@@ -249,6 +249,28 @@ commit()
 
 This means an append success only says that the disk writer accepted and wrote the bytes into the writer stream. It does not publish the record to the matching side. Publication happens after commit confirms the write boundary.
 
+Current prototype commit semantics:
+
+```text
+WalSegmentWriter::commit() -> std::ofstream::flush()
+```
+
+This is a language/runtime buffer flush, not an `fsync` / `fdatasync` durable
+commit. It is useful for keeping append and flush costs separate in tests and
+manual benchmarks. It must not be described as a durable storage boundary.
+
+Writer failure policy:
+
+```text
+after any write or flush failure
+    -> the writer enters a failed state
+    -> later append/commit calls fail
+    -> the writer must not be reused
+```
+
+The current prototype does not attempt partial-write recovery on the live writer
+object. Recovery is a reopen-and-scan operation.
+
 ---
 
 ## 9. WAL Writer Interface
@@ -396,7 +418,19 @@ records 1..3 are accepted
 record 4 is ignored or reported as incomplete
 ```
 
-Corruption in the middle of the log is a stronger error and should not be silently ignored.
+Scanner policy:
+
+```text
+incomplete trailing record
+    -> recoverable crash residue
+    -> truncate or ignore from the last valid offset
+
+complete but invalid record/header/CRC/sequence
+    -> corruption
+    -> report as corruption even if the invalid record is at the physical tail
+```
+
+Corruption is a stronger error and must not be silently ignored.
 
 ---
 

@@ -38,3 +38,8 @@ Thumbs.db
 
 # Demo WAL output
 wal/
+
+CODEX_CODE_RULES.*
+CODEX_HUMAN_CODE_APPENDIX.*
+
+*.zip

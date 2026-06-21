@@ -96,6 +96,8 @@ namespace core
         EventType,
         EventSequence,
         CommandSequence,
+        SourceIngressEpoch,
+        SourceIngressSequence,
         InstrumentId,
         OrderId,
         ContraOrderId,
@@ -104,7 +106,8 @@ namespace core
         QuantityLots,
         RemainingQuantityLots,
         TradeId,
-        RejectionReason
+        RejectionReason,
+        Reserved
     };
 
     /**

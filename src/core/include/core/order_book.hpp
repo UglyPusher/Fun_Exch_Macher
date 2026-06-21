@@ -104,8 +104,6 @@ namespace core
         using BidLevels = std::map<std::int64_t, std::deque<RestingOrder>, std::greater<>>;
         using AskLevels = std::map<std::int64_t, std::deque<RestingOrder>>;
 
-        [[nodiscard]] std::optional<CommandType> decode_command_type(
-            const domain::OrderCommandRecordV1& command) const noexcept;
         [[nodiscard]] std::optional<Side> decode_side(std::uint16_t side) const noexcept;
         [[nodiscard]] std::optional<TimeInForce> decode_time_in_force(
             const domain::OrderCommandRecordV1& command) const noexcept;

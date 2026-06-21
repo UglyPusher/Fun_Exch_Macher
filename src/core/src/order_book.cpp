@@ -88,7 +88,7 @@ namespace core
     {
         std::vector<domain::ExecutionEventRecordV1> events;
 
-        if (decode_command_type(command) != CommandType::CancelOrder) {
+        if (decode_command_type(command.command_type) != CommandType::CancelOrder) {
             events.push_back(emit_rejection_event(command, RejectionReason::UnsupportedCommand));
             return events;
         }
@@ -191,7 +191,7 @@ namespace core
 
     RejectionReason OrderBook::validate_new_order(const domain::OrderCommandRecordV1& command) const noexcept
     {
-        if (decode_command_type(command) != CommandType::NewOrder) {
+        if (decode_command_type(command.command_type) != CommandType::NewOrder) {
             return RejectionReason::UnsupportedCommand;
         }
 
@@ -226,7 +226,7 @@ namespace core
 
     RejectionReason OrderBook::validate_replace_order(const domain::OrderCommandRecordV1& command) const noexcept
     {
-        if (decode_command_type(command) != CommandType::ReplaceOrder) {
+        if (decode_command_type(command.command_type) != CommandType::ReplaceOrder) {
             return RejectionReason::UnsupportedCommand;
         }
 
@@ -265,19 +265,6 @@ namespace core
         }
 
         return RejectionReason::None;
-    }
-
-    std::optional<CommandType> OrderBook::decode_command_type(
-        const domain::OrderCommandRecordV1& command) const noexcept
-    {
-        switch (static_cast<CommandType>(command.command_type)) {
-        case CommandType::NewOrder:
-        case CommandType::CancelOrder:
-        case CommandType::ReplaceOrder:
-            return static_cast<CommandType>(command.command_type);
-        default:
-            return std::nullopt;
-        }
     }
 
     std::optional<Side> OrderBook::decode_side(std::uint16_t side) const noexcept

@@ -35,6 +35,12 @@ namespace core
         if (expected.command_sequence != actual.command_sequence) {
             return {.equal = false, .field = EventField::CommandSequence};
         }
+        if (expected.source_ingress_epoch != actual.source_ingress_epoch) {
+            return {.equal = false, .field = EventField::SourceIngressEpoch};
+        }
+        if (expected.source_ingress_sequence != actual.source_ingress_sequence) {
+            return {.equal = false, .field = EventField::SourceIngressSequence};
+        }
         if (expected.instrument_id != actual.instrument_id) {
             return {.equal = false, .field = EventField::InstrumentId};
         }
@@ -61,6 +67,9 @@ namespace core
         }
         if (expected.rejection_reason != actual.rejection_reason) {
             return {.equal = false, .field = EventField::RejectionReason};
+        }
+        if (expected.reserved != actual.reserved) {
+            return {.equal = false, .field = EventField::Reserved};
         }
 
         return {};

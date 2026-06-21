@@ -9,21 +9,6 @@
 
 namespace core
 {
-    namespace
-    {
-        std::optional<CommandType> decode_command_type(const domain::OrderCommandRecordV1& command) noexcept
-        {
-            switch (static_cast<CommandType>(command.command_type)) {
-            case CommandType::NewOrder:
-            case CommandType::CancelOrder:
-            case CommandType::ReplaceOrder:
-                return static_cast<CommandType>(command.command_type);
-            default:
-                return std::nullopt;
-            }
-        }
-    }
-
     InstrumentEngine::InstrumentEngine(std::uint64_t first_event_sequence) noexcept
         : order_book_(first_event_sequence)
     {
@@ -32,7 +17,7 @@ namespace core
     std::vector<domain::ExecutionEventRecordV1> InstrumentEngine::apply(
         const domain::OrderCommandRecordV1& command)
     {
-        const std::optional<CommandType> command_type = decode_command_type(command);
+        const std::optional<CommandType> command_type = decode_command_type(command.command_type);
         if (!command_type.has_value()) {
             return order_book_.reject_unsupported_command(command);
         }

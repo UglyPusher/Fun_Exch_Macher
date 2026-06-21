@@ -30,12 +30,18 @@ namespace projections
 
         ProjectionApplyResult applied()
         {
-            return {.status = ProjectionApplyStatus::Applied};
+            return {
+                .status = ProjectionApplyStatus::Applied,
+                .error = {}
+            };
         }
 
         ProjectionApplyResult ignored()
         {
-            return {.status = ProjectionApplyStatus::Ignored};
+            return {
+                .status = ProjectionApplyStatus::Ignored,
+                .error = {}
+            };
         }
 
         ProjectionApplyResult rejected(std::string error)

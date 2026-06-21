@@ -20,8 +20,3 @@ target_include_directories(wal
 )
 
 target_compile_features(wal PUBLIC cxx_std_20)
-
-target_compile_options(wal PRIVATE
-    $<$<CXX_COMPILER_ID:MSVC>:/W4 /permissive->
-    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>
-)

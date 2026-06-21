@@ -5,18 +5,23 @@
 
 #include "domain/record_types.hpp"
 
-namespace domain {
-
-std::string_view to_string(RecordType type) noexcept
+namespace domain
 {
-    switch (type) {
-    case RecordType::OrderCommand:
-        return "order_command";
-    case RecordType::ExecutionEvent:
-        return "execution_event";
+    std::string_view to_string(RecordType type) noexcept
+    {
+        switch (type) {
+        case RecordType::Unknown:
+            return "unknown";
+        case RecordType::IngressMessage:
+            return "ingress_message";
+        case RecordType::OrderCommand:
+            return "order_command";
+        case RecordType::ExecutionEvent:
+            return "execution_event";
+        case RecordType::ExecutionEventBatch:
+            return "execution_event_batch";
+        }
+
+        return "unknown";
     }
-
-    return "unknown";
 }
-
-} // namespace domain

@@ -5,8 +5,9 @@
  * @brief Append writer for one binary WAL segment file.
  *
  * The writer owns segment creation/reopen, record sequencing, checksums,
- * alignment, and pending-to-committed position tracking. It must not inspect
- * business fields inside payload bytes.
+ * alignment, and pending-to-committed position tracking. After any write or
+ * flush failure the writer enters a failed state and must not be reused. It
+ * must not inspect business fields inside payload bytes.
  */
 
 #include "wal/raw_wal_writer.hpp"
@@ -43,6 +44,9 @@ namespace wal
 
         /**
          * @brief Appends one raw payload as the next WAL record.
+         *
+         * If this operation fails because the underlying stream failed, this
+         * writer becomes permanently failed for the rest of its lifetime.
          */
         WalAppendResult append(
             RecordType record_type,
@@ -50,6 +54,10 @@ namespace wal
 
         /**
          * @brief Flushes pending bytes and publishes committed positions.
+         *
+         * If flushing fails, this writer becomes permanently failed for the
+         * rest of its lifetime. Partial-write recovery is handled by reopening
+         * and scanning the segment, not by reusing the failed writer.
          */
         WalCommitResult commit() override;
 
@@ -93,6 +101,7 @@ namespace wal
         [[nodiscard]] WalError read_existing_segment_header(WalSegmentHeader& header) const;
 
         void write_segment_header();
+        void fail_writer(WalError error) noexcept;
 
     private:
         std::filesystem::path file_path_;
@@ -103,9 +112,8 @@ namespace wal
         SequenceNumber next_sequence_ = 1;
         WalPosition last_position_ {};
         WalPosition last_committed_position_ {};
-        WalError open_error_ = WalError::None;
+        WalError writer_error_ = WalError::None;
 
-        std::vector<std::byte> write_buffer_;
         std::vector<WalPosition> pending_positions_;
         std::queue<WalPosition> committed_positions_;
     };

@@ -12,6 +12,7 @@
 #include <fstream>
 #include <sstream>
 #include <string_view>
+#include <utility>
 
 namespace app
 {
@@ -97,16 +98,34 @@ namespace app
             out << "line " << line_number << ": " << message;
             return out.str();
         }
+
+        ScenarioLoadResult loaded_scenario()
+        {
+            return {
+                .ok = true,
+                .error = {},
+                .commands = {}
+            };
+        }
+
+        ScenarioLoadResult failed_scenario(std::string error)
+        {
+            return {
+                .ok = false,
+                .error = std::move(error),
+                .commands = {}
+            };
+        }
     }
 
     ScenarioLoadResult load_scenario(const std::filesystem::path& path)
     {
         std::ifstream input{path};
         if (!input) {
-            return {.ok = false, .error = "cannot open scenario file: " + path.string()};
+            return failed_scenario("cannot open scenario file: " + path.string());
         }
 
-        ScenarioLoadResult result{.ok = true};
+        ScenarioLoadResult result = loaded_scenario();
         std::string line;
         std::size_t line_number = 0;
 
@@ -129,7 +148,7 @@ namespace app
             std::string instrument_token;
             std::string client_token;
             if (!(row >> sequence_token >> instrument_token >> client_token) || !parse_u64(sequence_token, command.command_sequence)) {
-                return {.ok = false, .error = line_error(line_number, "expected operation, sequence, instrument, and client")};
+                return failed_scenario(line_error(line_number, "expected operation, sequence, instrument, and client"));
             }
 
             command.source_ingress_sequence = command.command_sequence;
@@ -143,7 +162,7 @@ namespace app
                 std::string quantity_token;
                 std::string tif_token;
                 if (!(row >> order_token >> side_token >> price_token >> quantity_token >> tif_token)) {
-                    return {.ok = false, .error = line_error(line_number, "expected NEW seq instrument client order side price quantity tif")};
+                    return failed_scenario(line_error(line_number, "expected NEW seq instrument client order side price quantity tif"));
                 }
                 command.command_type = static_cast<std::uint16_t>(core::CommandType::NewOrder);
                 command.order_id = stable_id(order_token);
@@ -151,12 +170,12 @@ namespace app
                     || !parse_i64(price_token, command.price_ticks)
                     || !parse_i64(quantity_token, command.quantity_lots)
                     || !parse_tif(tif_token, command.time_in_force)) {
-                    return {.ok = false, .error = line_error(line_number, "invalid NEW field")};
+                    return failed_scenario(line_error(line_number, "invalid NEW field"));
                 }
             } else if (op == "CANCEL") {
                 std::string order_token;
                 if (!(row >> order_token)) {
-                    return {.ok = false, .error = line_error(line_number, "expected CANCEL seq instrument client order")};
+                    return failed_scenario(line_error(line_number, "expected CANCEL seq instrument client order"));
                 }
                 command.command_type = static_cast<std::uint16_t>(core::CommandType::CancelOrder);
                 command.order_id = stable_id(order_token);
@@ -168,7 +187,7 @@ namespace app
                 std::string quantity_token;
                 std::string tif_token;
                 if (!(row >> old_order_token >> new_order_token >> side_token >> price_token >> quantity_token >> tif_token)) {
-                    return {.ok = false, .error = line_error(line_number, "expected REPLACE seq instrument client old_order new_order side price quantity tif")};
+                    return failed_scenario(line_error(line_number, "expected REPLACE seq instrument client old_order new_order side price quantity tif"));
                 }
                 command.command_type = static_cast<std::uint16_t>(core::CommandType::ReplaceOrder);
                 command.order_id = stable_id(old_order_token);
@@ -177,10 +196,10 @@ namespace app
                     || !parse_i64(price_token, command.price_ticks)
                     || !parse_i64(quantity_token, command.quantity_lots)
                     || !parse_tif(tif_token, command.time_in_force)) {
-                    return {.ok = false, .error = line_error(line_number, "invalid REPLACE field")};
+                    return failed_scenario(line_error(line_number, "invalid REPLACE field"));
                 }
             } else {
-                return {.ok = false, .error = line_error(line_number, "unknown operation: " + op)};
+                return failed_scenario(line_error(line_number, "unknown operation: " + op));
             }
 
             result.commands.push_back(command);
