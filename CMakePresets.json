@@ -1,10 +1,30 @@
 {
-    "version": 8,
+    "version": 6,
     "configurePresets": [
+        {
+            "name": "debug",
+            "displayName": "Debug",
+            "description": "Default local Debug build.",
+            "binaryDir": "${sourceDir}/../build/debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        },
+        {
+            "name": "release",
+            "displayName": "Release",
+            "description": "Default local Release build.",
+            "binaryDir": "${sourceDir}/../build/release",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        },
         {
             "name": "Build",
             "displayName": "Visual Studio Community 2022 Release - x86_amd64",
-            "description": "Using compilers for Visual Studio 17 2022 (x86_x64 architecture)",
+            "description": "Legacy Visual Studio 2022 x64 configure preset.",
             "generator": "Visual Studio 17 2022",
             "toolset": "host=x86",
             "architecture": "x64",
@@ -18,10 +38,122 @@
     ],
     "buildPresets": [
         {
+            "name": "debug",
+            "displayName": "Build Debug",
+            "configurePreset": "debug",
+            "configuration": "Debug"
+        },
+        {
+            "name": "release",
+            "displayName": "Build Release",
+            "configurePreset": "release",
+            "configuration": "Release"
+        },
+        {
+            "name": "run",
+            "displayName": "Run Debug Demo",
+            "configurePreset": "debug",
+            "configuration": "Debug",
+            "targets": [
+                "run"
+            ]
+        },
+        {
+            "name": "debug-run",
+            "displayName": "Run Debug Demo Under gdb",
+            "configurePreset": "debug",
+            "configuration": "Debug",
+            "targets": [
+                "debug"
+            ]
+        },
+        {
             "name": "Build-debug",
             "displayName": "Visual Studio Community 2022 Release - x86_amd64 - Debug",
             "configurePreset": "Build",
             "configuration": "Debug"
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "debug",
+            "displayName": "Test Debug",
+            "configurePreset": "debug",
+            "configuration": "Debug",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "release",
+            "displayName": "Test Release",
+            "configurePreset": "release",
+            "configuration": "Release",
+            "output": {
+                "outputOnFailure": true
+            }
+        }
+    ],
+    "workflowPresets": [
+        {
+            "name": "build",
+            "displayName": "Configure And Build Debug",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "debug"
+                },
+                {
+                    "type": "build",
+                    "name": "debug"
+                }
+            ]
+        },
+        {
+            "name": "test",
+            "displayName": "Configure, Build, And Test Debug",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "debug"
+                },
+                {
+                    "type": "build",
+                    "name": "debug"
+                },
+                {
+                    "type": "test",
+                    "name": "debug"
+                }
+            ]
+        },
+        {
+            "name": "run",
+            "displayName": "Configure, Build, And Run Demo",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "debug"
+                },
+                {
+                    "type": "build",
+                    "name": "run"
+                }
+            ]
+        },
+        {
+            "name": "debug",
+            "displayName": "Configure, Build, And Debug Demo",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "debug"
+                },
+                {
+                    "type": "build",
+                    "name": "debug-run"
+                }
+            ]
         }
     ]
 }

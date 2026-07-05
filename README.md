@@ -116,6 +116,7 @@ must not receive duplicate implementations casually.
 - CMake 3.25+ for workflow presets.
 - C++20 compiler.
 - Linux-like environment.
+- Visual Studio 2022 is also supported through the legacy `Build` presets.
 - Optional: `gdb` for the debug target.
 
 ## Commands
@@ -162,6 +163,13 @@ Release build:
 cmake --preset release
 cmake --build --preset release
 ctest --preset release
+```
+
+Visual Studio 2022 compatibility presets are kept for Windows/MSVC builds:
+
+```bash
+cmake --preset Build
+cmake --build --preset Build-debug
 ```
 
 Run a scenario through Command WAL, `InstrumentEngine`, Execution Event WAL, and validation replay:
