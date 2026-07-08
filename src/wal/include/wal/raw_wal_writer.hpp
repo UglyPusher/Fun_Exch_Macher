@@ -27,7 +27,7 @@ namespace wal
         /**
          * @brief Appends one payload with the given WAL record type.
          */
-        virtual WalAppendResult append(
+        virtual WalRawAppendResult append(
             RecordType record_type,
             std::span<const std::byte> payload) = 0;
 

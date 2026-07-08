@@ -62,21 +62,20 @@ Implemented in this prototype:
 - CRC32 for segment header, record header, and payload;
 - stream/epoch/sequence validation;
 - public `wal/wal.hpp` facade;
-- internal raw reader/writer APIs;
-- internal typed read/write adapters for trivially-copyable DTO tests;
+- internal raw reader/writer APIs for segment implementation;
+- thin typed read/write adapters over the public `Wal` facade;
 - segment scanner for recovery decisions;
 - writer reopen handling for existing segments;
 - truncation of incomplete trailing records on writer reopen;
 - refusal to append after middle corruption;
-- pending-to-committed writer boundary;
-- committed position queue after write/flush acknowledgement;
+- fixed commit path: write, flush, fsync, publish committed visibility;
+- batch visibility through one physical batch envelope;
 - tests for corruption, recovery, sequencing, and typed boundaries.
 - app-level command/event WAL integration with the current matcher pipeline.
 
 Not implemented yet:
 
-- POSIX `fsync` / `fdatasync` durability policy;
-- persisted committed-offset metadata across process restarts;
+- configurable durability policies;
 - multi-segment rotation;
 - replicated WAL / quorum append;
 - stream health owner;
@@ -106,12 +105,12 @@ wal_position.hpp              stream + epoch + sequence
 wal_record_header.hpp         fixed record metadata + CRC helper
 wal_segment_header.hpp        segment metadata + CRC helper
 wal_record_view.hpp           validated raw record view
-wal_result.hpp                append/read/commit result types
+wal_result.hpp                low-level segment result types
 wal_error.hpp                 physical/typed WAL error codes
 raw_wal_writer.hpp            payload-agnostic write interface
 raw_wal_reader.hpp            payload-agnostic read interface
-typed_wal_writer.hpp          DTO -> bytes adapter
-typed_wal_reader.hpp          bytes -> DTO adapter
+typed_wal_writer.hpp          DTO -> Wal adapter
+typed_wal_reader.hpp          Wal -> DTO adapter
 wal_segment_writer.hpp        binary segment append/reopen logic
 wal_segment_reader.hpp        binary segment validated reader
 wal_segment_scanner.hpp       recovery scanner
@@ -343,13 +342,13 @@ Typed adapters are intentionally thin:
 TypedWalWriter<TRecord, RecordType>
     -> static_assert trivially copyable
     -> std::as_bytes(record)
-    -> raw_writer.append(type, bytes)
+    -> wal.append(type, bytes)
 
 TypedWalReader<TRecord, RecordType>
-    -> raw_reader.read_next(view)
-    -> validate view.header.record_type
-    -> validate view.payload.size() == sizeof(TRecord)
-    -> std::memcpy(&record, view.payload.data(), sizeof(TRecord))
+    -> wal.read_next(cursor, record)
+    -> validate record.record_type
+    -> validate record.payload.size() == sizeof(TRecord)
+    -> std::memcpy(&dto, record.payload.data(), sizeof(TRecord))
 ```
 
 DTO requirements:
@@ -400,31 +399,21 @@ src/wal/doc/wal_invariants.md
 
 ## Commit Semantics
 
-Current prototype `commit()` flushes the C++ stream and then publishes pending record positions:
+The public WAL-v0 facade has no separate commit call:
 
 ```text
-append(record/batch)
+Wal::append(record)
     -> binary disk write
-    -> pending position
-
-commit()
-    -> std::ofstream::flush()
-    -> write/flush acknowledgement
-    -> committed position queue
+    -> flush
+    -> fsync
+    -> publish committed visibility
 ```
 
-This is not the same as durable `fsync`.
-
-The code keeps commit policy interfaces because later versions should distinguish:
-
-```text
-NoSync      append visible to process, no durability claim
-Flush       userspace stream flush
-Fsync       OS durable commit via fsync/fdatasync
-Replicated  quorum/replica policy
-```
-
-Until POSIX fsync support exists, README/docs should treat current commit as prototype flush semantics, not production durability.
+The lower-level segment writer still has an internal flush method used by
+implementation tests, but normal app, replay, benchmark, and domain-adapter code
+must treat successful `Wal::append()` / `Wal::append_batch()` as the committed
+durability boundary. Configurable commit policies are intentionally out of
+scope for v0.
 
 ## Tests
 
@@ -440,7 +429,8 @@ Current WAL test coverage includes:
 - aligned record length checks;
 - CRC32 stability and payload-change detection;
 - segment writer append and sequence increment;
-- segment writer pending-to-committed publication;
+- facade append/read committed visibility;
+- facade batch visibility and recovery behavior;
 - writer reopen sequence continuation;
 - incomplete tail truncation on writer reopen;
 - refusal to append after middle corruption;

@@ -12,10 +12,10 @@ pipeline and where the time is spent:
 
 ```text
 generated OrderCommandRecordV1
-    -> Command WAL append + commit
+    -> Command WAL append
     -> Command WAL read
     -> InstrumentEngine / OrderBook
-    -> Event WAL append + commit
+    -> Event WAL append
 ```
 
 The generated workload uses pairs:
@@ -39,15 +39,17 @@ Arguments:
 ```text
 1. command count, optional, default 100000
 2. output directory for benchmark WAL files, optional, default benchmark_wal
-3. commit_every, optional, default 0
+3. legacy commit_every value, optional, default 0
 ```
 
-Supported `commit_every` values:
+WAL-v0 commits each successful append durably:
 
 ```text
-1, 16, 64, 256, 1024
-0 means commit once at the end of each WAL write phase
+append -> write -> flush -> fsync -> committed visibility
 ```
+
+The third argument is retained so older benchmark commands still parse, but it
+does not select a durability policy in WAL-v0.
 
 Read the result as a local estimate, not a product guarantee. Use the same build
 type and disk location when comparing changes.

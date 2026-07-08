@@ -2,13 +2,13 @@
 
 /**
  * @file typed_wal_reader.hpp
- * @brief Converts validated raw WAL payloads into trivially-copyable records.
+ * @brief Converts WAL payloads into trivially-copyable records.
  *
  * The typed reader checks record type and payload size before copying bytes
  * into a DTO. It must not validate the business meaning of that DTO.
  */
 
-#include "wal/raw_wal_reader.hpp"
+#include "wal/wal.hpp"
 
 #include <cstring>
 #include <span>
@@ -17,17 +17,17 @@
 namespace wal
 {
     /**
-     * @brief Adapter from RawWalReader to one concrete record type.
+     * @brief Adapter from Wal to one concrete record type.
      */
     template <typename TRecord, RecordType TRecordType>
     class TypedWalReader
     {
     public:
         /**
-         * @brief Binds the adapter to an existing raw reader.
+         * @brief Binds the adapter to an existing WAL facade and caller-owned cursor.
          */
-        explicit TypedWalReader(RawWalReader& raw_reader)
-            : raw_reader_(raw_reader)
+        TypedWalReader(Wal& wal, WalCursor& cursor)
+            : wal_(wal), cursor_(cursor)
         {
             static_assert(std::is_trivially_copyable_v<TRecord>);
         }
@@ -37,25 +37,26 @@ namespace wal
          */
         WalReadResult read_next(TRecord& record)
         {
-            WalRecordView view;
-            auto result = raw_reader_.read_next(view);
+            WalRecord wal_record;
+            auto result = wal_.read_next(cursor_, wal_record);
             if (result.status != WalReadStatus::RecordRead) {
                 return result;
             }
 
-            if (view.header.record_type != TRecordType) {
+            if (wal_record.record_type != TRecordType) {
                 result.status = WalReadStatus::Failed;
                 result.error = WalError::RecordTypeMismatch;
                 return result;
             }
 
-            if (view.payload.size() != sizeof(TRecord)) {
+            if (wal_record.payload.size() != sizeof(TRecord)) {
                 result.status = WalReadStatus::Failed;
                 result.error = WalError::PayloadSizeMismatch;
                 return result;
             }
 
-            std::memcpy(&record, view.payload.data(), sizeof(TRecord));
+            std::memcpy(&record, wal_record.payload.data(), sizeof(TRecord));
+            last_position_ = result.position;
             return result;
         }
 
@@ -64,10 +65,12 @@ namespace wal
          */
         [[nodiscard]] WalPosition last_position() const noexcept
         {
-            return raw_reader_.last_position();
+            return last_position_;
         }
 
     private:
-        RawWalReader& raw_reader_;
+        Wal& wal_;
+        WalCursor& cursor_;
+        WalPosition last_position_{};
     };
 }

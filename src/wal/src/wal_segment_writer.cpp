@@ -12,6 +12,7 @@
 
 #include <array>
 #include <fstream>
+#include <limits>
 #include <utility>
 
 namespace wal
@@ -57,17 +58,17 @@ namespace wal
         }
     }
 
-    WalAppendResult WalSegmentWriter::append(
+    WalRawAppendResult WalSegmentWriter::append(
         RecordType record_type,
         std::span<const std::byte> payload)
     {
         if (writer_error_ != WalError::None) {
-            return {.status = WalAppendStatus::Failed, .error = writer_error_, .position = last_position_};
+            return {.status = WalRawAppendStatus::Failed, .error = writer_error_, .position = last_position_};
         }
 
         if (!file_) {
             fail_writer(WalError::CannotWriteFile);
-            return {.status = WalAppendStatus::Failed, .error = WalError::CannotWriteFile, .position = last_position_};
+            return {.status = WalRawAppendStatus::Failed, .error = WalError::CannotWriteFile, .position = last_position_};
         }
 
         return write_record(record_type, payload);
@@ -131,10 +132,20 @@ namespace wal
         return true;
     }
 
-    WalAppendResult WalSegmentWriter::write_record(
+    WalRawAppendResult WalSegmentWriter::write_record(
         RecordType record_type,
         std::span<const std::byte> payload)
     {
+        constexpr auto max_record_length = std::numeric_limits<std::uint32_t>::max();
+        if (payload.size() > max_record_length - sizeof(WalRecordHeader)) {
+            return {.status = WalRawAppendStatus::Rejected, .error = WalError::InvalidPayloadLength, .position = last_position_};
+        }
+
+        const auto raw_record_length = sizeof(WalRecordHeader) + static_cast<std::uint32_t>(payload.size());
+        if (raw_record_length > max_record_length - (DefaultRecordAlignment - 1)) {
+            return {.status = WalRawAppendStatus::Rejected, .error = WalError::InvalidRecordLength, .position = last_position_};
+        }
+
         auto header = make_header(record_type, payload, next_sequence_);
 
         file_.write(reinterpret_cast<const char*>(&header), sizeof(header));
@@ -150,12 +161,12 @@ namespace wal
 
         if (!file_) {
             fail_writer(WalError::CannotWriteFile);
-            return {.status = WalAppendStatus::Failed, .error = WalError::CannotWriteFile, .position = last_position_};
+            return {.status = WalRawAppendStatus::Failed, .error = WalError::CannotWriteFile, .position = last_position_};
         }
 
         last_position_ = {stream_id_, epoch_, next_sequence_++};
         pending_positions_.push_back(last_position_);
-        return {.status = WalAppendStatus::Appended, .error = WalError::None, .position = last_position_};
+        return {.status = WalRawAppendStatus::Appended, .error = WalError::None, .position = last_position_};
     }
 
     WalRecordHeader WalSegmentWriter::make_header(

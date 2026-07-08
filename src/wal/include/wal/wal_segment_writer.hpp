@@ -49,7 +49,7 @@ namespace wal
          * If this operation fails because the underlying stream failed, this
          * writer becomes permanently failed for the rest of its lifetime.
          */
-        WalAppendResult append(
+        WalRawAppendResult append(
             RecordType record_type,
             std::span<const std::byte> payload) override;
 
@@ -89,7 +89,7 @@ namespace wal
         bool pop_committed_position(WalPosition& out);
 
     private:
-        WalAppendResult write_record(
+        WalRawAppendResult write_record(
             RecordType record_type,
             std::span<const std::byte> payload);
 

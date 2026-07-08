@@ -79,25 +79,26 @@ namespace
 
     template <typename TRecord>
     wal::WalAppendResult append_storage_record(
-        wal::WalWriter& writer,
+        wal::Wal& wal_log,
         wal::RecordType record_type,
         const TRecord& record)
     {
         static_assert(std::is_trivially_copyable_v<TRecord>);
         const auto payload = std::as_bytes(std::span{&record, 1});
-        return writer.append_record(record_type, payload);
+        return wal_log.append(wal::WalMessageView{.record_type = record_type, .payload = payload});
     }
 
     template <typename TRecord>
     wal::WalReadResult read_storage_record(
-        wal::WalReader& reader,
+        wal::Wal& wal_log,
+        wal::WalCursor& cursor,
         wal::RecordType expected_record_type,
         TRecord& record)
     {
         static_assert(std::is_trivially_copyable_v<TRecord>);
 
         wal::WalRecord wal_record;
-        wal::WalReadResult read_result = reader.read_next_record(wal_record);
+        wal::WalReadResult read_result = wal_log.read_next(cursor, wal_record);
         if (read_result.status != wal::WalReadStatus::RecordRead) {
             return read_result;
         }
@@ -243,56 +244,6 @@ namespace
     }
 
     /**
-     * @brief Commits a WAL writer after the configured number of appended records.
-     */
-    template <typename TWriter>
-    bool commit_if_interval_is_reached(
-        TWriter& writer,
-        std::uint64_t commit_every,
-        std::uint64_t& records_since_commit,
-        PhaseMeasurement& measurement,
-        std::string_view failure_message)
-    {
-        if (commit_every == 0 || records_since_commit < commit_every) {
-            return true;
-        }
-
-        const wal::WalCommitResult commit_result = writer.commit();
-        if (commit_result.status != wal::WalCommitStatus::Committed) {
-            std::cerr << failure_message << '\n';
-            return false;
-        }
-
-        ++measurement.commit_count;
-        records_since_commit = 0;
-        return true;
-    }
-
-    /**
-     * @brief Commits any records left after a WAL write phase.
-     */
-    template <typename TWriter>
-    bool commit_remaining_records(
-        TWriter& writer,
-        std::uint64_t records_since_commit,
-        PhaseMeasurement& measurement,
-        std::string_view failure_message)
-    {
-        if (records_since_commit == 0) {
-            return true;
-        }
-
-        const wal::WalCommitResult commit_result = writer.commit();
-        if (commit_result.status != wal::WalCommitStatus::Committed) {
-            std::cerr << failure_message << '\n';
-            return false;
-        }
-
-        ++measurement.commit_count;
-        return true;
-    }
-
-    /**
      * @brief Writes generated commands to the Command WAL.
      */
     bool write_command_wal(
@@ -301,22 +252,22 @@ namespace
         std::uint64_t commit_every,
         PhaseMeasurement& measurement)
     {
+        (void)commit_every;
         std::filesystem::remove(command_wal_path);
         measurement.name = "command_wal_write";
 
-        wal::WalWriter command_writer{wal::WalWriterConfig{
-            .file_path = command_wal_path,
+        wal::Wal command_wal{wal::WalConfig{
+            .path = command_wal_path,
             .stream_id = command_stream_id,
             .epoch = benchmark_epoch,
             .first_sequence = first_sequence
         }};
 
-        std::uint64_t records_since_commit = 0;
         const Clock::time_point started_at = Clock::now();
         for (const domain::OrderCommandRecordV1& command : commands) {
             const wal::WalAppendResult append_result =
-                append_storage_record(command_writer, order_command_record_type, command);
-            if (append_result.status != wal::WalAppendStatus::Appended) {
+                append_storage_record(command_wal, order_command_record_type, command);
+            if (!append_result.ok()) {
                 std::cerr << "command WAL append failed at sequence "
                           << command.command_sequence << '\n';
                 return false;
@@ -324,23 +275,7 @@ namespace
 
             ++measurement.command_count;
             ++measurement.record_count;
-            ++records_since_commit;
-            if (!commit_if_interval_is_reached(
-                    command_writer,
-                    commit_every,
-                    records_since_commit,
-                    measurement,
-                    "command WAL commit failed")) {
-                return false;
-            }
-        }
-
-        if (!commit_remaining_records(
-                command_writer,
-                records_since_commit,
-                measurement,
-                "command WAL final commit failed")) {
-            return false;
+            ++measurement.commit_count;
         }
 
         const Clock::time_point finished_at = Clock::now();
@@ -358,13 +293,14 @@ namespace
     {
         measurement.name = "command_wal_read_only";
 
-        wal::WalReader command_reader{wal::WalReaderConfig{.file_path = command_wal_path}};
+        wal::Wal command_wal{wal::WalConfig{.path = command_wal_path, .stream_id = command_stream_id, .epoch = benchmark_epoch}};
+        wal::WalCursor command_cursor = command_wal.cursor_from_beginning();
 
         const Clock::time_point started_at = Clock::now();
         while (true) {
             domain::OrderCommandRecordV1 command{};
             const wal::WalReadResult command_read_result =
-                read_storage_record(command_reader, order_command_record_type, command);
+                read_storage_record(command_wal, command_cursor, order_command_record_type, command);
             if (command_read_result.status == wal::WalReadStatus::EndOfLog) {
                 break;
             }
@@ -416,22 +352,22 @@ namespace
         std::uint64_t commit_every,
         PhaseMeasurement& measurement)
     {
+        (void)commit_every;
         std::filesystem::remove(event_wal_path);
         measurement.name = "event_wal_append";
 
-        wal::WalWriter event_writer{wal::WalWriterConfig{
-            .file_path = event_wal_path,
+        wal::Wal event_wal{wal::WalConfig{
+            .path = event_wal_path,
             .stream_id = event_stream_id,
             .epoch = benchmark_epoch,
             .first_sequence = first_sequence
         }};
 
-        std::uint64_t records_since_commit = 0;
         const Clock::time_point started_at = Clock::now();
         for (const domain::ExecutionEventRecordV1& execution_event : execution_events) {
             const wal::WalAppendResult event_append_result =
-                append_storage_record(event_writer, execution_event_record_type, execution_event);
-            if (event_append_result.status != wal::WalAppendStatus::Appended) {
+                append_storage_record(event_wal, execution_event_record_type, execution_event);
+            if (!event_append_result.ok()) {
                 std::cerr << "event WAL append failed at event sequence "
                           << execution_event.event_sequence << '\n';
                 return false;
@@ -439,23 +375,7 @@ namespace
 
             ++measurement.event_count;
             ++measurement.record_count;
-            ++records_since_commit;
-            if (!commit_if_interval_is_reached(
-                    event_writer,
-                    commit_every,
-                    records_since_commit,
-                    measurement,
-                    "event WAL commit failed")) {
-                return false;
-            }
-        }
-
-        if (!commit_remaining_records(
-                event_writer,
-                records_since_commit,
-                measurement,
-                "event WAL final commit failed")) {
-            return false;
+            ++measurement.commit_count;
         }
 
         const Clock::time_point finished_at = Clock::now();
@@ -474,26 +394,27 @@ namespace
         std::uint64_t commit_every,
         PhaseMeasurement& measurement)
     {
+        (void)commit_every;
         std::filesystem::remove(event_wal_path);
         measurement.name = "read_match_event_pipeline";
 
-        wal::WalReader command_reader{wal::WalReaderConfig{.file_path = command_wal_path}};
+        wal::Wal command_wal{wal::WalConfig{.path = command_wal_path, .stream_id = command_stream_id, .epoch = benchmark_epoch}};
+        wal::WalCursor command_cursor = command_wal.cursor_from_beginning();
 
-        wal::WalWriter event_writer{wal::WalWriterConfig{
-            .file_path = event_wal_path,
+        wal::Wal event_wal{wal::WalConfig{
+            .path = event_wal_path,
             .stream_id = event_stream_id,
             .epoch = benchmark_epoch,
             .first_sequence = first_sequence
         }};
 
-        std::uint64_t records_since_commit = 0;
         core::InstrumentEngine engine{first_sequence};
 
         const Clock::time_point started_at = Clock::now();
         while (true) {
             domain::OrderCommandRecordV1 command{};
             const wal::WalReadResult command_read_result =
-                read_storage_record(command_reader, order_command_record_type, command);
+                read_storage_record(command_wal, command_cursor, order_command_record_type, command);
             if (command_read_result.status == wal::WalReadStatus::EndOfLog) {
                 break;
             }
@@ -507,8 +428,8 @@ namespace
             std::vector<domain::ExecutionEventRecordV1> execution_events = engine.apply(command);
             for (const domain::ExecutionEventRecordV1& execution_event : execution_events) {
                 const wal::WalAppendResult event_append_result =
-                    append_storage_record(event_writer, execution_event_record_type, execution_event);
-                if (event_append_result.status != wal::WalAppendStatus::Appended) {
+                    append_storage_record(event_wal, execution_event_record_type, execution_event);
+                if (!event_append_result.ok()) {
                     std::cerr << "event WAL pipeline append failed at event sequence "
                               << execution_event.event_sequence << '\n';
                     return false;
@@ -516,24 +437,8 @@ namespace
 
                 ++measurement.event_count;
                 ++measurement.record_count;
-                ++records_since_commit;
-                if (!commit_if_interval_is_reached(
-                        event_writer,
-                        commit_every,
-                        records_since_commit,
-                        measurement,
-                        "event WAL pipeline commit failed")) {
-                    return false;
-                }
+                ++measurement.commit_count;
             }
-        }
-
-        if (!commit_remaining_records(
-                event_writer,
-                records_since_commit,
-                measurement,
-                "event WAL pipeline final commit failed")) {
-            return false;
         }
 
         const Clock::time_point finished_at = Clock::now();

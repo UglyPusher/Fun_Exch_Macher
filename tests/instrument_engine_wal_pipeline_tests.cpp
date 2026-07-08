@@ -22,25 +22,26 @@ namespace
 
     template <typename TRecord>
     wal::WalAppendResult append_storage_record(
-        wal::WalWriter& writer,
+        wal::Wal& wal_log,
         wal::RecordType record_type,
         const TRecord& record)
     {
         static_assert(std::is_trivially_copyable_v<TRecord>);
         const auto payload = std::as_bytes(std::span{&record, 1});
-        return writer.append_record(record_type, payload);
+        return wal_log.append(wal::WalMessageView{.record_type = record_type, .payload = payload});
     }
 
     template <typename TRecord>
     wal::WalReadResult read_storage_record(
-        wal::WalReader& reader,
+        wal::Wal& wal_log,
+        wal::WalCursor& cursor,
         wal::RecordType expected_record_type,
         TRecord& record)
     {
         static_assert(std::is_trivially_copyable_v<TRecord>);
 
         wal::WalRecord wal_record;
-        wal::WalReadResult read_result = reader.read_next_record(wal_record);
+        wal::WalReadResult read_result = wal_log.read_next(cursor, wal_record);
         if (read_result.status != wal::WalReadStatus::RecordRead) {
             return read_result;
         }
@@ -164,23 +165,21 @@ namespace
         const std::vector<domain::OrderCommandRecordV1>& commands)
     {
         std::filesystem::remove(path);
-        wal::WalWriter command_writer{wal::WalWriterConfig{
-            .file_path = path,
+        wal::Wal command_wal{wal::WalConfig{
+            .path = path,
             .stream_id = 10,
             .epoch = 1,
             .first_sequence = commands.front().command_sequence
         }};
 
         for (const auto& command : commands) {
-            const auto append_result = append_storage_record(command_writer, order_command_record_type, command);
-            if (append_result.status != wal::WalAppendStatus::Appended || append_result.position.sequence != command.command_sequence) {
+            const auto append_result = append_storage_record(command_wal, order_command_record_type, command);
+            if (!append_result.ok() || append_result.position.sequence != command.command_sequence) {
                 return false;
             }
         }
 
-        const auto commit_result = command_writer.commit();
-        return commit_result.status == wal::WalCommitStatus::Committed
-            && commit_result.committed_up_to.sequence == commands.back().command_sequence;
+        return true;
     }
 
     std::vector<domain::ExecutionEventRecordV1> run_engine_from_command_wal(
@@ -189,11 +188,12 @@ namespace
         std::vector<domain::ExecutionEventRecordV1> generated_events;
         core::InstrumentEngine engine{5001};
 
-        wal::WalReader command_reader{wal::WalReaderConfig{.file_path = command_wal_path}};
+        wal::Wal command_wal{wal::WalConfig{.path = command_wal_path, .stream_id = 10, .epoch = 1}};
+        wal::WalCursor command_cursor = command_wal.cursor_from_beginning();
 
         while (true) {
             domain::OrderCommandRecordV1 command{};
-            const auto read_result = read_storage_record(command_reader, order_command_record_type, command);
+            const auto read_result = read_storage_record(command_wal, command_cursor, order_command_record_type, command);
             if (read_result.status == wal::WalReadStatus::EndOfLog) {
                 break;
             }
@@ -215,33 +215,32 @@ namespace
         const std::vector<domain::ExecutionEventRecordV1>& events)
     {
         std::filesystem::remove(path);
-        wal::WalWriter event_writer{wal::WalWriterConfig{
-            .file_path = path,
+        wal::Wal event_wal{wal::WalConfig{
+            .path = path,
             .stream_id = 20,
             .epoch = 1,
             .first_sequence = events.front().event_sequence
         }};
 
         for (const auto& event : events) {
-            const auto append_result = append_storage_record(event_writer, execution_event_record_type, event);
-            if (append_result.status != wal::WalAppendStatus::Appended || append_result.position.sequence != event.event_sequence) {
+            const auto append_result = append_storage_record(event_wal, execution_event_record_type, event);
+            if (!append_result.ok() || append_result.position.sequence != event.event_sequence) {
                 return false;
             }
         }
 
-        const auto commit_result = event_writer.commit();
-        return commit_result.status == wal::WalCommitStatus::Committed
-            && commit_result.committed_up_to.sequence == events.back().event_sequence;
+        return true;
     }
 
     std::vector<domain::ExecutionEventRecordV1> read_events(const std::filesystem::path& path)
     {
         std::vector<domain::ExecutionEventRecordV1> events;
-        wal::WalReader event_reader{wal::WalReaderConfig{.file_path = path}};
+        wal::Wal event_wal{wal::WalConfig{.path = path, .stream_id = 20, .epoch = 1}};
+        wal::WalCursor event_cursor = event_wal.cursor_from_beginning();
 
         while (true) {
             domain::ExecutionEventRecordV1 event{};
-            const auto read_result = read_storage_record(event_reader, execution_event_record_type, event);
+            const auto read_result = read_storage_record(event_wal, event_cursor, execution_event_record_type, event);
             if (read_result.status == wal::WalReadStatus::EndOfLog) {
                 break;
             }

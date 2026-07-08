@@ -58,10 +58,10 @@ src/wal/
   - binary segment writer
   - binary segment reader
   - segment scanner for recovery decisions
-  - raw WAL reader/writer interfaces
-  - typed WAL reader/writer adapters
-  - pending-to-committed writer boundary
-  - committed position queue after write/flush acknowledgement
+  - public `Wal` facade
+  - typed WAL reader/writer adapters over the facade
+  - fixed write -> flush -> fsync -> committed visibility boundary
+  - internal segment reader/writer/scanner implementation
 
 src/domain/
   - OrderCommandRecordV1
@@ -133,14 +133,12 @@ matching_engine_app
 
 ```text
 OrderCommandRecordV1[]
-    -> Command WAL append
-    -> Command WAL commit ack
+    -> Command WAL append ack
     -> committed command read through typed DTO boundary
     -> InstrumentEngine.apply(command)
     -> OrderBook.apply_new_order(command) / OrderBook.apply_cancel_order(command) / OrderBook.apply_replace_order(command)
     -> ExecutionEventRecordV1[]
-    -> Event WAL append
-    -> Event WAL commit ack
+    -> Event WAL append ack
     -> committed event read through typed DTO boundary
 ```
 
@@ -227,10 +225,10 @@ The current `OrderBook` remains pure in-memory code. It does not know about WAL 
 Domain DTO
     |
     v
-TypedWalWriter / TypedWalReader
+Wal facade / TypedWalWriter / TypedWalReader
     |
     v
-RawWalWriter / RawWalReader
+Internal raw segment interfaces
     |
     v
 WalSegmentWriter / WalSegmentReader / WalSegmentScanner
@@ -264,8 +262,7 @@ Current WAL properties:
 - portfolio state projection
 - accounting projection
 - snapshots
-- persisted committed-offset metadata across process restarts
-- POSIX fsync/fdatasync durability policy
+- configurable durability policies
 - multi-segment rotation
 ```
 

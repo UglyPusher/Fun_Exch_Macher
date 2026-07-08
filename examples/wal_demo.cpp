@@ -2,8 +2,8 @@
  * @file wal_demo.cpp
  * @brief Minimal standalone demonstration of the public WAL facade.
  *
- * The demo writes a few raw records, commits them, reads them back, and prints
- * a short summary. It intentionally uses only wal/wal.hpp.
+ * The demo writes a few committed messages, reads them back, and prints a
+ * short summary. It intentionally uses only wal/wal.hpp.
  */
 
 #include "wal/wal.hpp"
@@ -44,34 +44,32 @@ int main(int argc, char** argv)
         bytes_from_text("third demo record")
     };
 
-    wal::WalWriter writer{wal::WalWriterConfig{
-        .file_path = wal_path,
+    wal::Wal demo_wal{wal::WalConfig{
+        .path = wal_path,
         .stream_id = demo_stream_id,
         .epoch = demo_epoch,
         .first_sequence = first_sequence
     }};
 
     for (const std::vector<std::byte>& payload : payloads) {
-        const wal::WalAppendResult append_result = writer.append_record(demo_record_type, payload);
-        if (append_result.status != wal::WalAppendStatus::Appended) {
+        const wal::WalAppendResult append_result = demo_wal.append(wal::WalMessageView{
+            .record_type = demo_record_type,
+            .payload = payload
+        });
+        if (!append_result.ok()) {
             std::cerr << "wal_demo: append failed\n";
             return 1;
         }
     }
 
-    const wal::WalCommitResult commit_result = writer.commit();
-    if (commit_result.status != wal::WalCommitStatus::Committed) {
-        std::cerr << "wal_demo: commit failed\n";
-        return 2;
-    }
-
-    wal::WalReader reader{wal::WalReaderConfig{.file_path = wal_path}};
+    wal::WalCursor cursor = demo_wal.cursor_from_beginning();
     std::uint64_t records_read = 0;
     std::uint64_t bytes_read = 0;
+    wal::WalPosition last_read_position{};
 
     while (true) {
         wal::WalRecord record;
-        const wal::WalReadResult read_result = reader.read_next_record(record);
+        const wal::WalReadResult read_result = demo_wal.read_next(cursor, record);
         if (read_result.status == wal::WalReadStatus::EndOfLog) {
             break;
         }
@@ -82,6 +80,7 @@ int main(int argc, char** argv)
 
         ++records_read;
         bytes_read += record.payload.size();
+        last_read_position = record.position;
     }
 
     std::cout << "wal_demo OK\n"
@@ -89,6 +88,6 @@ int main(int argc, char** argv)
               << "records_written: " << payloads.size() << '\n'
               << "records_read: " << records_read << '\n'
               << "payload_bytes_read: " << bytes_read << '\n'
-              << "last_committed_sequence: " << commit_result.committed_up_to.sequence << '\n';
+              << "last_committed_sequence: " << last_read_position.sequence << '\n';
     return 0;
 }

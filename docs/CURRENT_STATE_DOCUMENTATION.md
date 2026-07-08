@@ -200,7 +200,6 @@ src/wal/include/wal/typed_wal_writer.hpp
 src/wal/include/wal/wal.hpp
 src/wal/include/wal/wal_alignment.hpp
 src/wal/include/wal/wal_checksum.hpp
-src/wal/include/wal/wal_commit_policy.hpp
 src/wal/include/wal/wal_error.hpp
 src/wal/include/wal/wal_file.hpp
 src/wal/include/wal/wal_position.hpp
@@ -217,7 +216,9 @@ src/wal/include/wal/wal_types.hpp
 Main types:
 
 ```text
-RawWalWriter / RawWalReader
+Wal
+WalCursor
+WalRecord
 TypedWalWriter<TRecord, TRecordType>
 TypedWalReader<TRecord, TRecordType>
 WalSegmentWriter
@@ -226,7 +227,7 @@ WalSegmentScanner
 WalRecordHeader
 WalSegmentHeader
 WalPosition
-WalAppendResult / WalReadResult / WalCommitResult
+WalAppendResult / WalBatchAppendResult / WalReadResult / WalBatchReadResult
 WalError
 ```
 
@@ -241,10 +242,11 @@ WalSegmentHeader
 
 Responsibilities:
 
-- `WalSegmentWriter` appends typed or raw records to one file.
+- `Wal` is the public durable committed-message facade.
+- `WalSegmentWriter` is internal segment append/reopen logic.
 - `WalSegmentReader` sequentially reads and validates records.
 - `WalSegmentScanner` scans an existing segment and finds the last valid position/offset.
-- `TypedWalReader/Writer` validate record type and payload size for trivially-copyable records.
+- `TypedWalReader/Writer` are thin adapters over `Wal` for trivially-copyable records.
 
 Current dependency rule:
 

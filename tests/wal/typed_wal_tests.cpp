@@ -3,9 +3,9 @@
 
 #include <array>
 #include <cstddef>
-#include <cstring>
+#include <cstdint>
+#include <filesystem>
 #include <span>
-#include <vector>
 
 namespace
 {
@@ -15,94 +15,74 @@ namespace
         std::uint32_t quantity = 0;
     };
 
-    class MemoryWriter final : public wal::RawWalWriter
+    constexpr wal::RecordType test_record_type = 200;
+
+    std::filesystem::path test_path(const char* name)
     {
-    public:
-        wal::WalAppendResult append(wal::RecordType record_type, std::span<const std::byte> payload) override
-        {
-            record_type_ = record_type;
-            payload_.assign(payload.begin(), payload.end());
-            last_position_ = {1, 1, 1};
-            return {.status = wal::WalAppendStatus::Appended, .error = wal::WalError::None, .position = last_position_};
-        }
+        return std::filesystem::current_path() / name;
+    }
 
-        wal::WalCommitResult commit() override
-        {
-            return {.status = wal::WalCommitStatus::Committed, .error = wal::WalError::None, .committed_up_to = last_position_};
-        }
-
-        [[nodiscard]] wal::WalPosition last_position() const noexcept override
-        {
-            return last_position_;
-        }
-
-        wal::RecordType record_type_ = 0;
-        std::vector<std::byte> payload_;
-        wal::WalPosition last_position_{};
-    };
-
-    class MemoryReader final : public wal::RawWalReader
+    wal::WalConfig wal_config(const std::filesystem::path& path)
     {
-    public:
-        MemoryReader(wal::RecordType record_type, std::span<const std::byte> payload)
-            : record_type_(record_type), payload_(payload.begin(), payload.end())
-        {
-        }
-
-        wal::WalReadResult read_next(wal::WalRecordView& out) override
-        {
-            if (consumed_) {
-                return {.status = wal::WalReadStatus::EndOfLog, .error = wal::WalError::EndOfLog, .position = last_position_};
-            }
-
-            consumed_ = true;
-            last_position_ = {1, 1, 1};
-            out.header = {.record_length = static_cast<std::uint32_t>(sizeof(wal::WalRecordHeader) + payload_.size()), .record_type = record_type_, .stream_id = 1, .epoch = 1, .sequence = 1, .payload_length = static_cast<std::uint32_t>(payload_.size())};
-            out.payload = std::span<const std::byte>{payload_.data(), payload_.size()};
-            return {.status = wal::WalReadStatus::RecordRead, .error = wal::WalError::None, .position = last_position_};
-        }
-
-        [[nodiscard]] wal::WalPosition last_position() const noexcept override
-        {
-            return last_position_;
-        }
-
-        wal::RecordType record_type_ = 0;
-        std::vector<std::byte> payload_;
-        bool consumed_ = false;
-        wal::WalPosition last_position_{};
-    };
+        return {
+            .path = path,
+            .stream_id = 1,
+            .epoch = 1,
+            .first_sequence = 1
+        };
+    }
 }
 
 int main()
 {
-    TestRecord written{.id = 42, .quantity = 7};
+    const std::filesystem::path path = test_path("typed_wal_tests.wal");
+    std::filesystem::remove(path);
 
-    MemoryWriter raw_writer;
-    wal::TypedWalWriter<TestRecord, 200> typed_writer{raw_writer};
-    if (typed_writer.append(written).status != wal::WalAppendStatus::Appended || raw_writer.record_type_ != 200) {
+    TestRecord written{.id = 42, .quantity = 7};
+    wal::Wal wal_log{wal_config(path)};
+
+    wal::TypedWalWriter<TestRecord, test_record_type> typed_writer{wal_log};
+    if (!typed_writer.append(written).ok() || typed_writer.last_position().sequence != 1) {
+        std::filesystem::remove(path);
         return 1;
     }
 
-    MemoryReader raw_reader{200, raw_writer.payload_};
-    wal::TypedWalReader<TestRecord, 200> typed_reader{raw_reader};
+    wal::WalCursor cursor = wal_log.cursor_from_beginning();
+    wal::TypedWalReader<TestRecord, test_record_type> typed_reader{wal_log, cursor};
     TestRecord read;
-    if (typed_reader.read_next(read).status != wal::WalReadStatus::RecordRead || read.id != written.id || read.quantity != written.quantity) {
+    if (typed_reader.read_next(read).status != wal::WalReadStatus::RecordRead
+        || read.id != written.id
+        || read.quantity != written.quantity) {
+        std::filesystem::remove(path);
         return 2;
     }
 
-    MemoryReader mismatch_reader{300, raw_writer.payload_};
-    wal::TypedWalReader<TestRecord, 200> mismatch_typed_reader{mismatch_reader};
-    if (mismatch_typed_reader.read_next(read).error != wal::WalError::RecordTypeMismatch) {
+    const std::array mismatch_payload{std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}};
+    if (!wal_log.append(wal::WalMessageView{.record_type = 300, .payload = mismatch_payload}).ok()) {
+        std::filesystem::remove(path);
         return 3;
     }
 
-    const std::array short_payload{std::byte{1}};
-    MemoryReader short_reader{200, short_payload};
-    wal::TypedWalReader<TestRecord, 200> short_typed_reader{short_reader};
-    if (short_typed_reader.read_next(read).error != wal::WalError::PayloadSizeMismatch) {
+    wal::WalCursor mismatch_cursor = wal_log.cursor_from(2);
+    wal::TypedWalReader<TestRecord, test_record_type> mismatch_reader{wal_log, mismatch_cursor};
+    if (mismatch_reader.read_next(read).error != wal::WalError::RecordTypeMismatch) {
+        std::filesystem::remove(path);
         return 4;
     }
 
+    const std::array short_payload{std::byte{1}};
+    if (!wal_log.append(wal::WalMessageView{.record_type = test_record_type, .payload = short_payload}).ok()) {
+        std::filesystem::remove(path);
+        return 5;
+    }
+
+    wal::WalCursor short_cursor = wal_log.cursor_from(3);
+    wal::TypedWalReader<TestRecord, test_record_type> short_reader{wal_log, short_cursor};
+    if (short_reader.read_next(read).error != wal::WalError::PayloadSizeMismatch) {
+        std::filesystem::remove(path);
+        return 6;
+    }
+
+    std::filesystem::remove(path);
     return 0;
 }

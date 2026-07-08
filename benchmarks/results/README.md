@@ -19,8 +19,9 @@ output paths: build/load_benchmark_ce*
 Important WAL note:
 
 ```text
-Prototype WAL commit currently calls std::ofstream::flush().
-It is not an fsync/fdatasync durable commit boundary.
+Current WAL-v0 append commits with write, flush, fsync, and committed
+visibility. Historical rows that vary `commit_every` should be read as
+pre-refactor measurements, not current durability-policy choices.
 ```
 
 ## Comparison

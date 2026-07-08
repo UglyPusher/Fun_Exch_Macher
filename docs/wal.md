@@ -242,22 +242,22 @@ append(record/batch)
 
 commit()
     -> flush disk writer
-    -> receive write acknowledgement
-    -> move pending positions to committed queue
-    -> readers/matcher may consume committed positions
+    -> flush
+    -> fsync
+    -> publish committed visibility
+    -> readers/matcher may consume committed records
 ```
 
-This means an append success only says that the disk writer accepted and wrote the bytes into the writer stream. It does not publish the record to the matching side. Publication happens after commit confirms the write boundary.
+In the current v0 facade, append success means the message is already committed
+and visible. There is no public append-then-commit flow.
 
-Current prototype commit semantics:
+Current v0 commit semantics:
 
 ```text
-WalSegmentWriter::commit() -> std::ofstream::flush()
+Wal::append() -> write -> flush -> fsync -> publish committed visibility
 ```
 
-This is a language/runtime buffer flush, not an `fsync` / `fdatasync` durable
-commit. It is useful for keeping append and flush costs separate in tests and
-manual benchmarks. It must not be described as a durable storage boundary.
+Durability policy variants are intentionally not part of v0.
 
 Writer failure policy:
 
@@ -285,8 +285,7 @@ class IWalWriter
 public:
     virtual ~IWalWriter() = default;
 
-    virtual uint64_t append(std::span<const std::byte> payload) = 0;
-    virtual void flush() = 0;
+    virtual WalAppendResult append(std::span<const std::byte> payload) = 0;
 };
 ```
 
@@ -296,8 +295,7 @@ A typed wrapper may exist above this interface:
 class ExecutionEventLog
 {
 public:
-    uint64_t append_event(const ExecutionEvent& event);
-    void flush();
+    WalAppendResult append_event(const ExecutionEvent& event);
 };
 ```
 

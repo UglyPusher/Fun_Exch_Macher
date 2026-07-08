@@ -8,19 +8,24 @@ This is not a production exchange and not an HFT system. The goal is to demonstr
 Normalized Command Log -> Deterministic Matcher -> Execution Event Log
 ```
 
-The current project is still a prototype. In particular, WAL `commit()` currently
-flushes the C++ stream buffer; it is not an `fsync` / `fdatasync` durable
-boundary yet.
+The current project is still a prototype. The WAL-v0 public contract is now a
+small durable facade: successful `append()` / `append_batch()` means
+write + flush + fsync + committed visibility.
 
 ## Current Status
 
 Implemented now:
 
 - CMake-native build, test, run, and debug workflows via `CMakePresets.json`.
-- WAL core types: positions, record headers, record views, result/status types, and errors.
-- Raw WAL interfaces: `RawWalWriter` and `RawWalReader`.
-- Typed WAL adapters for trivially-copyable storage DTOs.
-- Binary segment writer/reader/scanner with segment headers, record headers, payload CRC32, sequence validation, and trailing-record detection.
+- WAL facade API: `Wal::append`, `Wal::append_batch`, `Wal::read_next`,
+  `Wal::read_batch`, cursors, and simple committed/failed/corrupted state
+  diagnostics.
+- WAL core internals: positions, record headers, record views, result/status
+  types, raw segment interfaces, and errors.
+- Thin typed WAL adapters for trivially-copyable storage DTOs.
+- Binary segment writer/reader/scanner with segment headers, record headers,
+  payload CRC32, sequence validation, recovery scan, and trailing-record
+  truncation.
 - Domain storage DTOs for order commands and execution events.
 - In-memory `OrderBook` FSM for `NewOrder`: passive resting, price/time matching, partial fill, full fill, and duplicate rejection.
 - In-memory `OrderBook` support for `CancelOrder`: existing-order cancellation, unknown-order rejection, instrument mismatch rejection, FIFO price-level removal, and invariant validation.
@@ -29,7 +34,8 @@ Implemented now:
 - Deterministic replay validation harness comparing regenerated execution events with stored execution events through normalized event fields.
 - Market data projection from Execution Event WAL into public book depth and trade tape.
 - End-to-end instrument pipeline test covering Command WAL -> committed command reader -> InstrumentEngine -> Event WAL -> event reader.
-- WAL-focused tests covering headers, checksum stability, segment write/read, recovery scanning, and typed adapters.
+- WAL-focused tests covering facade append/read, batch visibility, recovery,
+  headers, checksum stability, segment write/read, and typed adapters.
 - Replay tests covering happy paths, event count mismatch, event field mismatch, event order mismatch, extra/missing stored events, command sequence breaks, cancel replay, and replace replay.
 - CLI/demo runner with `run`, `replay`, `dump-events`, `dump-book`, and `dump-trades` commands.
 - Manual load benchmark for separating command WAL write, command WAL read, matcher-only, Event WAL append, and full read/match/event pipeline costs.
@@ -212,9 +218,9 @@ target:
 ./build/load_pipeline_benchmark 100000 build/load_benchmark 0
 ```
 
-The third argument is `commit_every`. Supported values are `1`, `16`, `64`,
-`256`, `1024`, and `0`; `0` means one commit at the end of each WAL write phase.
-The benchmark is intentionally outside `ctest`.
+The third argument is currently a legacy compatibility value. WAL-v0 commits
+each successful `append()` durably, so the benchmark does not expose commit
+policy tuning. The benchmark is intentionally outside `ctest`.
 
 ## WAL Design Snapshot
 
@@ -228,24 +234,20 @@ The WAL core is payload-agnostic. It knows only:
 - payload length;
 - payload bytes;
 - checksum;
-- alignment;
-- commit result.
+- alignment.
 
-Current prototype commit semantics:
+Current WAL-v0 commit semantics:
 
 ```text
-WalSegmentWriter::commit() -> std::ofstream::flush()
+Wal::append() -> write -> flush -> fsync -> publish committed visibility
 ```
 
-This is useful for separating append and flush costs in the prototype benchmark,
-but it is not a durable storage guarantee. Durable `fsync` / `fdatasync`
-semantics and the recovery contract for Event WAL batch commit remain future
-work.
+There is no public `commit()` and no configurable durability policy in v0.
 
 Domain decoding lives above the raw WAL layer:
 
 ```text
-Raw WAL -> Typed adapter -> Domain storage DTO
+Wal facade -> Typed adapter -> Domain storage DTO
 ```
 
 The typed adapter uses `std::as_bytes` and `std::memcpy`, so records must be fixed-layout, trivially copyable storage DTOs. They must not contain `std::string`, `std::vector`, pointers, allocator state, or business-object behavior.
@@ -287,7 +289,7 @@ Out of scope for the first prototype:
 - Self-trade prevention.
 - Clustering, failover, consensus, and replicated durability.
 - Advanced order types.
-- Batch matching and Event WAL batch commit.
+- Batch matching.
 
 First meaningful prototype target:
 
@@ -301,5 +303,5 @@ First meaningful prototype target:
 - deterministic replay test;
 - demo runner from scenario file to Replay OK;
 - market data projection from event WAL;
-- raw and typed WAL adapters;
+- WAL facade and typed payload adapters;
 - simple file segment writer/reader.

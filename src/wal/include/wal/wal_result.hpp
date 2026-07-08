@@ -16,7 +16,7 @@ namespace wal
     /**
      * @brief Status of appending one record.
      */
-    enum class WalAppendStatus
+    enum class WalRawAppendStatus
     {
         Appended,
         Rejected,
@@ -26,9 +26,9 @@ namespace wal
     /**
      * @brief Result of appending one record to a WAL writer.
      */
-    struct WalAppendResult
+    struct WalRawAppendResult
     {
-        WalAppendStatus status = WalAppendStatus::Failed;
+        WalRawAppendStatus status = WalRawAppendStatus::Failed;
         WalError error = WalError::None;
         WalPosition position {};
     };
@@ -70,5 +70,10 @@ namespace wal
         WalReadStatus status = WalReadStatus::Failed;
         WalError error = WalError::None;
         WalPosition position {};
+
+        /**
+         * @brief Checks whether one committed record was read.
+         */
+        [[nodiscard]] bool ok() const noexcept;
     };
 }

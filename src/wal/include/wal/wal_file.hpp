@@ -35,5 +35,9 @@ namespace wal
          * @brief Truncates a file to the requested size.
          */
         static void truncate(const std::filesystem::path& file_path, std::uint64_t size);
+        /**
+         * @brief Forces file contents to the operating system durable boundary.
+         */
+        static bool sync(const std::filesystem::path& file_path);
     };
 }

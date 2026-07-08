@@ -8,7 +8,6 @@ add_library(wal STATIC
     src/wal_segment_writer.cpp
     src/wal_segment_reader.cpp
     src/wal_segment_scanner.cpp
-    src/wal_commit_policy.cpp
     src/wal_checksum.cpp
     src/wal_alignment.cpp
     src/wal_file.cpp

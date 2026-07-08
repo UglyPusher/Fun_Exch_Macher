@@ -75,10 +75,10 @@ The WAL boundary is binary and write-ack driven. A record or batch becomes visib
                            v
                       [Disk Writer]                [implemented as binary segment writer]
                            |
-                      write/flush ack              [partially implemented: flush, not fsync]
+                      write/flush/fsync ack        [implemented in WAL-v0 facade]
                            |
                            v
-                    [Committed Queue]              [implemented as committed position queue]
+                    [Committed Visibility]         [implemented in WAL-v0 facade]
                            |
                            v
                     [Command Reader]               [implemented as raw/typed segment reader]
@@ -87,18 +87,18 @@ The WAL boundary is binary and write-ack driven. A record or batch becomes visib
 Analogous target event path:
 
 ```text
-[Event WAL API] ---> [Pending Records / Batch]     [implemented in writer state]
+[Event WAL API] ---> [Pending Records / Batch]     [implemented behind facade]
                          |
                          v
                     [Disk Writer]                  [implemented as binary segment writer]
                          |
-                    write/flush ack                [partially implemented: flush, not fsync]
+                    write/flush/fsync ack          [implemented in WAL-v0 facade]
                          |
                          v
-                  [Committed Event Queue]          [implemented as committed position queue]
+                  [Committed Event Visibility]     [implemented in WAL-v0 facade]
 ```
 
-The current WAL implementation is strict and binary: segment files, segment headers, record headers, payload CRC32, sequence validation, raw readers/writers, typed adapters, recovery scanning, pending positions, and committed-position publishing after commit.
+The current WAL implementation is strict and binary: segment files, segment headers, record headers, payload CRC32, sequence validation, internal raw readers/writers, typed adapters, recovery scanning, and committed visibility after successful facade append.
 
 ## Logical Target Flow
 

@@ -1,83 +1,89 @@
 # WAL Facade
 
-`wal/wal.hpp` is the public WAL-v0 API.
+`wal/wal.hpp` is the normal public WAL-v0 API.
 
-Normal users of the WAL subsystem should include only this header. The binary
-record header, segment header, CRC implementation, padding, concrete segment
-reader/writer, and scanner classes are implementation details.
-
-WAL-v0 is feature-frozen. New work should harden tests, documentation, and
-recovery behavior around this API rather than adding new binary format features.
+WAL-v0 is a durable append-only committed message queue. Callers append byte
+payloads and read only committed payloads back. Segment headers, record
+headers, CRC, padding, scanners, raw readers, raw writers, and committed
+frontiers are implementation details.
 
 ## Public API
 
-The facade exposes only the operations needed by current users:
+Normal users create one `wal::Wal` facade:
 
 ```cpp
-wal::WalWriter writer{wal::WalWriterConfig{
-    .file_path = "commands.wal",
+wal::Wal command_wal{wal::WalConfig{
+    .path = "commands.wal",
     .stream_id = 10,
     .epoch = 1,
     .first_sequence = 1
 }};
 
-writer.append_record(record_type, payload_bytes);
-writer.commit();
+const wal::WalAppendResult append_result = command_wal.append(wal::WalMessageView{
+    .record_type = record_type,
+    .payload = payload_bytes
+});
 
-wal::WalReader reader{wal::WalReaderConfig{
-    .file_path = "commands.wal"
-}};
-
-wal::WalRecord record;
-reader.read_next_record(record);
+if (!append_result.ok()) {
+    return;
+}
 ```
 
-Recovery helpers:
+After successful `append()` the message is written, flushed, synced, committed,
+and visible to readers. There is no public `commit()` step.
+
+Batch append commits atomically by visibility:
 
 ```cpp
-wal::scan_wal_segment(path);
-wal::recover_wal_segment(path);
+std::array<wal::WalMessageView, 3> messages{first, second, third};
+const wal::WalBatchAppendResult result = event_wal.append_batch(messages);
 ```
 
-`recover_wal_segment()` only truncates a recoverable incomplete trailing record.
-It does not repair corrupted complete records.
+If the batch succeeds, all messages are committed. If the write, flush, or sync
+fails, none of the batch is published as committed in the current process.
+
+Read with a caller-owned cursor:
+
+```cpp
+wal::WalCursor cursor = event_wal.cursor_from_beginning();
+wal::WalRecord record;
+
+while (event_wal.read_next(cursor, record).ok()) {
+    // record is committed and durable
+}
+```
+
+Batch read fills up to the provided buffer size:
+
+```cpp
+std::array<wal::WalRecord, 128> records;
+const wal::WalBatchReadResult result = event_wal.read_batch(cursor, records);
+```
 
 ## Guarantees
 
 WAL-v0 guarantees:
 
-- append assigns stream-local sequence numbers;
-- committed records can be read back in sequence;
-- record type and payload bytes are preserved;
-- readers validate segment header, record header, sequence, payload length, and checksums;
-- incomplete trailing records are recoverable crash residue;
-- complete invalid records are corruption, including at the physical tail;
-- after a writer write/flush failure, the writer is failed and must not be reused.
+- `append()` success means durable committed visibility;
+- `append_batch()` success means the whole batch is durable and visible;
+- readers never return uncommitted messages;
+- incomplete trailing records are not exposed as committed data;
+- corrupted middle records fail closed instead of being skipped;
+- payload length overflow is rejected before writing;
+- recovery scans the existing segment and continues the public sequence after
+  the last committed message;
+- WAL stays payload-agnostic and does not know domain DTO semantics.
 
-The facade returns explicit `WalAppendResult`, `WalCommitResult`, `WalReadResult`,
-and `WalRecoveryResult` values. Callers must check them.
+## Fixed V0 Policy
 
-## Limitations
-
-WAL-v0 intentionally does not implement:
-
-- `fsync` / `fdatasync`;
-- segment rotation;
-- batch commit metadata;
-- compression;
-- encryption;
-- multi-segment readers;
-- partial-write repair on a live writer object.
-
-Current commit semantics:
+WAL-v0 intentionally has no configurable durability policy:
 
 ```text
-WalWriter::commit()
-    -> WalSegmentWriter::commit()
-    -> std::ofstream::flush()
+write -> flush -> fsync -> publish committed visibility
 ```
 
-This is a C++ stream flush. It is not an operating-system durable commit.
+There is no `NoSync`, `FlushOnly`, `FsyncEveryN`, or virtual commit policy in
+this version. If policy variants are needed later, they belong to WAL-v1.
 
 ## Recovery Policy
 
@@ -85,32 +91,34 @@ Scanner and recovery behavior:
 
 ```text
 valid records followed by EOF
-    -> ok
+    -> committed records are readable
 
 valid records followed by incomplete trailing record
-    -> recoverable
-    -> recover_wal_segment() truncates to the last valid offset
+    -> tail is truncated
+    -> earlier committed records are readable
 
-complete record with invalid header, sequence, or CRC
-    -> corruption
-    -> not recovered by WAL-v0
+complete corrupted record in the middle
+    -> WAL opens in corrupted state
+    -> reads and appends fail closed
 ```
 
-This policy lets a process ignore or truncate a torn crash tail while refusing
-to silently accept corrupted complete records.
+Recovery does not silently skip corrupted complete records.
 
 ## Typed Payloads
 
-The facade is raw payload API. Typed DTO conversion belongs at the caller
-boundary:
+WAL stores bytes. Typed DTO conversion is a thin adapter at the caller
+boundary, never a separate WAL implementation.
 
 ```cpp
 const auto payload = std::as_bytes(std::span{&record, 1});
-writer.append_record(order_command_record_type, payload);
+wal_log.append(wal::WalMessageView{
+    .record_type = order_command_record_type,
+    .payload = payload
+});
 ```
 
-When reading, the caller checks `WalRecord::record_type` and payload size before
-copying bytes into a trivially-copyable DTO.
+When reading, callers or typed adapters check `WalRecord::record_type` and
+payload size before copying bytes into a trivially-copyable DTO.
 
 ## Demo
 
@@ -121,5 +129,5 @@ cmake --build build --target wal_demo
 ./build/wal_demo build/wal_demo.wal
 ```
 
-The demo writes three records, commits, reads them back, and prints a short
+The demo appends three committed records, reads them back, and prints a short
 summary. It is intentionally not registered in `ctest`.

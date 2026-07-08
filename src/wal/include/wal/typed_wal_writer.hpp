@@ -2,13 +2,13 @@
 
 /**
  * @file typed_wal_writer.hpp
- * @brief Converts trivially-copyable records into raw WAL payloads.
+ * @brief Converts trivially-copyable records into WAL payloads.
  *
  * The typed writer preserves the DTO bytes and assigns a fixed record type. It
  * must not inspect business fields inside the record.
  */
 
-#include "wal/raw_wal_writer.hpp"
+#include "wal/wal.hpp"
 
 #include <span>
 #include <type_traits>
@@ -16,17 +16,17 @@
 namespace wal
 {
     /**
-     * @brief Adapter from one concrete record type to RawWalWriter.
+     * @brief Adapter from one concrete record type to Wal.
      */
     template <typename TRecord, RecordType TRecordType>
     class TypedWalWriter
     {
     public:
         /**
-         * @brief Binds the adapter to an existing raw writer.
+         * @brief Binds the adapter to an existing WAL facade.
          */
-        explicit TypedWalWriter(RawWalWriter& raw_writer)
-            : raw_writer_(raw_writer)
+        explicit TypedWalWriter(Wal& wal)
+            : wal_(wal)
         {
             static_assert(std::is_trivially_copyable_v<TRecord>);
         }
@@ -36,16 +36,15 @@ namespace wal
          */
         WalAppendResult append(const TRecord& record)
         {
-            auto bytes = std::as_bytes(std::span{&record, 1});
-            return raw_writer_.append(TRecordType, bytes);
-        }
-
-        /**
-         * @brief Commits through the underlying raw writer.
-         */
-        WalCommitResult commit()
-        {
-            return raw_writer_.commit();
+            const auto bytes = std::as_bytes(std::span{&record, 1});
+            const WalAppendResult result = wal_.append(WalMessageView{
+                .record_type = TRecordType,
+                .payload = bytes
+            });
+            if (result.ok()) {
+                last_position_ = result.position;
+            }
+            return result;
         }
 
         /**
@@ -53,10 +52,11 @@ namespace wal
          */
         [[nodiscard]] WalPosition last_position() const noexcept
         {
-            return raw_writer_.last_position();
+            return last_position_;
         }
 
     private:
-        RawWalWriter& raw_writer_;
+        Wal& wal_;
+        WalPosition last_position_{};
     };
 }

@@ -34,25 +34,29 @@ namespace
 
     template <typename TRecord>
     wal::WalAppendResult append_storage_record(
-        wal::WalWriter& writer,
+        wal::Wal& wal_log,
         wal::RecordType record_type,
         const TRecord& record)
     {
         static_assert(std::is_trivially_copyable_v<TRecord>);
         const auto payload = std::as_bytes(std::span{&record, 1});
-        return writer.append_record(record_type, payload);
+        return wal_log.append(wal::WalMessageView{
+            .record_type = record_type,
+            .payload = payload
+        });
     }
 
     template <typename TRecord>
     wal::WalReadResult read_storage_record(
-        wal::WalReader& reader,
+        wal::Wal& wal_log,
+        wal::WalCursor& cursor,
         wal::RecordType expected_record_type,
         TRecord& record)
     {
         static_assert(std::is_trivially_copyable_v<TRecord>);
 
         wal::WalRecord wal_record;
-        wal::WalReadResult read_result = reader.read_next_record(wal_record);
+        wal::WalReadResult read_result = wal_log.read_next(cursor, wal_record);
         if (read_result.status != wal::WalReadStatus::RecordRead) {
             return read_result;
         }
@@ -76,14 +80,15 @@ namespace
     class WalCommandReplayReader final : public core::CommandLogReader
     {
     public:
-        explicit WalCommandReplayReader(wal::WalReader& reader)
-            : reader_(reader)
+        explicit WalCommandReplayReader(wal::Wal& command_wal)
+            : command_wal_(command_wal),
+              cursor_(command_wal_.cursor_from_beginning())
         {
         }
 
         core::ReplayCommandReadResult read_next(domain::OrderCommandRecordV1& command) override
         {
-            const auto result = read_storage_record(reader_, order_command_record_type, command);
+            const auto result = read_storage_record(command_wal_, cursor_, order_command_record_type, command);
             if (result.status == wal::WalReadStatus::RecordRead) {
                 return {.status = core::ReplayReadStatus::RecordRead};
             }
@@ -94,20 +99,22 @@ namespace
         }
 
     private:
-        wal::WalReader& reader_;
+        wal::Wal& command_wal_;
+        wal::WalCursor cursor_;
     };
 
     class WalEventReplayReader final : public core::EventLogReader
     {
     public:
-        explicit WalEventReplayReader(wal::WalReader& reader)
-            : reader_(reader)
+        explicit WalEventReplayReader(wal::Wal& event_wal)
+            : event_wal_(event_wal),
+              cursor_(event_wal_.cursor_from_beginning())
         {
         }
 
         core::ReplayEventReadResult read_next(domain::ExecutionEventRecordV1& event) override
         {
-            const auto result = read_storage_record(reader_, execution_event_record_type, event);
+            const auto result = read_storage_record(event_wal_, cursor_, execution_event_record_type, event);
             if (result.status == wal::WalReadStatus::RecordRead) {
                 return {.status = core::ReplayReadStatus::RecordRead};
             }
@@ -118,7 +125,8 @@ namespace
         }
 
     private:
-        wal::WalReader& reader_;
+        wal::Wal& event_wal_;
+        wal::WalCursor cursor_;
     };
 
     void print_usage()
@@ -150,25 +158,21 @@ namespace
         std::filesystem::create_directories(path.parent_path().empty() ? "." : path.parent_path());
         std::filesystem::remove(path);
 
-        wal::WalWriter writer{wal::WalWriterConfig{
-            .file_path = path,
+        wal::Wal command_wal{wal::WalConfig{
+            .path = path,
             .stream_id = command_stream_id,
             .epoch = epoch,
             .first_sequence = commands.empty() ? first_sequence : commands.front().command_sequence
         }};
 
         for (const auto& command : commands) {
-            const auto append = append_storage_record(writer, order_command_record_type, command);
-            if (append.status != wal::WalAppendStatus::Appended) {
+            const auto append = append_storage_record(command_wal, order_command_record_type, command);
+            if (!append.ok()) {
                 return false;
             }
         }
 
-        if (commands.empty()) {
-            return true;
-        }
-
-        return writer.commit().status == wal::WalCommitStatus::Committed;
+        return true;
     }
 
     bool write_events(
@@ -178,25 +182,21 @@ namespace
         std::filesystem::create_directories(path.parent_path().empty() ? "." : path.parent_path());
         std::filesystem::remove(path);
 
-        wal::WalWriter writer{wal::WalWriterConfig{
-            .file_path = path,
+        wal::Wal event_wal{wal::WalConfig{
+            .path = path,
             .stream_id = event_stream_id,
             .epoch = epoch,
             .first_sequence = events.empty() ? first_sequence : events.front().event_sequence
         }};
 
         for (const auto& event : events) {
-            const auto append = append_storage_record(writer, execution_event_record_type, event);
-            if (append.status != wal::WalAppendStatus::Appended) {
+            const auto append = append_storage_record(event_wal, execution_event_record_type, event);
+            if (!append.ok()) {
                 return false;
             }
         }
 
-        if (events.empty()) {
-            return true;
-        }
-
-        return writer.commit().status == wal::WalCommitStatus::Committed;
+        return true;
     }
 
     std::vector<domain::ExecutionEventRecordV1> run_engine(
@@ -215,11 +215,11 @@ namespace
 
     int replay_wals(const std::filesystem::path& command_wal, const std::filesystem::path& event_wal)
     {
-        wal::WalReader command_reader{wal::WalReaderConfig{.file_path = command_wal}};
-        WalCommandReplayReader replay_command_reader{command_reader};
+        wal::Wal command_log{wal::WalConfig{.path = command_wal, .stream_id = command_stream_id, .epoch = epoch}};
+        WalCommandReplayReader replay_command_reader{command_log};
 
-        wal::WalReader event_reader{wal::WalReaderConfig{.file_path = event_wal}};
-        WalEventReplayReader replay_event_reader{event_reader};
+        wal::Wal event_log{wal::WalConfig{.path = event_wal, .stream_id = event_stream_id, .epoch = epoch}};
+        WalEventReplayReader replay_event_reader{event_log};
 
         core::InstrumentEngine engine{first_sequence};
         core::EventComparator comparator;
@@ -306,11 +306,12 @@ namespace
             return 1;
         }
 
-        wal::WalReader reader{wal::WalReaderConfig{.file_path = argv[2]}};
+        wal::Wal event_wal{wal::WalConfig{.path = argv[2], .stream_id = event_stream_id, .epoch = epoch}};
+        wal::WalCursor cursor = event_wal.cursor_from_beginning();
 
         while (true) {
             domain::ExecutionEventRecordV1 event{};
-            const auto read = read_storage_record(reader, execution_event_record_type, event);
+            const auto read = read_storage_record(event_wal, cursor, execution_event_record_type, event);
             if (read.status == wal::WalReadStatus::EndOfLog) {
                 break;
             }
@@ -328,11 +329,12 @@ namespace
         projections::MarketDataProjection& projection,
         const std::filesystem::path& event_wal)
     {
-        wal::WalReader reader{wal::WalReaderConfig{.file_path = event_wal}};
+        wal::Wal event_log{wal::WalConfig{.path = event_wal, .stream_id = event_stream_id, .epoch = epoch}};
+        wal::WalCursor cursor = event_log.cursor_from_beginning();
 
         while (true) {
             domain::ExecutionEventRecordV1 event{};
-            const auto read = read_storage_record(reader, execution_event_record_type, event);
+            const auto read = read_storage_record(event_log, cursor, execution_event_record_type, event);
             if (read.status == wal::WalReadStatus::EndOfLog) {
                 return true;
             }
