@@ -37,6 +37,10 @@ namespace wal
         static void truncate(const std::filesystem::path& file_path, std::uint64_t size);
         /**
          * @brief Forces file contents to the operating system durable boundary.
+         *
+         * WAL v0 currently flushes the writer stream first and then syncs by
+         * reopening this path. A future descriptor-owned writer should fsync
+         * the same native handle used for writes.
          */
         static bool sync(const std::filesystem::path& file_path);
     };

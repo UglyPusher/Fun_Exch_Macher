@@ -5,10 +5,11 @@
  * @brief Append writer for one binary WAL segment file.
  *
  * The writer owns segment creation/reopen, record sequencing, checksums,
- * alignment, and pending-to-committed position tracking. After any write or
- * flush failure the writer enters a failed state and must not be reused. It
- * must not inspect business fields inside payload bytes. This is an internal
- * WAL-v0 implementation detail; normal users should include wal/wal.hpp.
+ * alignment, and stream flushing. After any write or flush failure the writer
+ * enters a failed state and must not be reused. Logical committed visibility is
+ * owned by the Wal facade, not by this physical writer. It must not inspect
+ * business fields inside payload bytes. This is an internal WAL-v0
+ * implementation detail; normal users should include wal/wal.hpp.
  */
 
 #include "wal/raw_wal_writer.hpp"
@@ -18,7 +19,6 @@
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
-#include <queue>
 #include <vector>
 
 namespace wal
@@ -54,39 +54,22 @@ namespace wal
             std::span<const std::byte> payload) override;
 
         /**
-         * @brief Flushes pending bytes and publishes committed positions.
+         * @brief Flushes pending bytes without publishing logical visibility.
          *
          * If flushing fails, this writer becomes permanently failed for the
          * rest of its lifetime. Partial-write recovery is handled by reopening
          * and scanning the segment, not by reusing the failed writer.
          */
-        WalCommitResult commit() override;
+        WalFlushResult flush_pending_writes() override;
 
         /**
          * @brief Returns the last appended position.
          */
         [[nodiscard]] WalPosition last_position() const noexcept override;
         /**
-         * @brief Returns the last position made visible by commit().
-         */
-        [[nodiscard]] WalPosition last_committed_position() const noexcept;
-        /**
-         * @brief Checks whether commit() has published at least one position.
-         */
-        [[nodiscard]] bool has_committed_position() const noexcept;
-        /**
-         * @brief Returns the number of appended positions waiting for commit.
+         * @brief Returns the number of appended positions waiting for flush.
          */
         [[nodiscard]] std::size_t pending_count() const noexcept;
-        /**
-         * @brief Returns the number of committed positions waiting to be consumed.
-         */
-        [[nodiscard]] std::size_t committed_queue_size() const noexcept;
-
-        /**
-         * @brief Pops the oldest committed position from the visibility queue.
-         */
-        bool pop_committed_position(WalPosition& out);
 
     private:
         WalRawAppendResult write_record(
@@ -112,10 +95,8 @@ namespace wal
         EpochId epoch_ = 0;
         SequenceNumber next_sequence_ = 1;
         WalPosition last_position_ {};
-        WalPosition last_committed_position_ {};
         WalError writer_error_ = WalError::None;
 
         std::vector<WalPosition> pending_positions_;
-        std::queue<WalPosition> committed_positions_;
     };
 }

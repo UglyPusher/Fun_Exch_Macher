@@ -1,4 +1,5 @@
 #include "wal/wal.hpp"
+#include "wal/wal_segment_reader.hpp"
 
 #include <array>
 #include <cstddef>
@@ -8,7 +9,6 @@
 #include <iterator>
 #include <limits>
 #include <span>
-#include <string_view>
 #include <vector>
 
 namespace
@@ -109,6 +109,35 @@ namespace
         return false;
     }
 
+    bool contains_byte_sequence(
+        const std::vector<std::byte>& bytes,
+        std::span<const std::byte> sequence) noexcept
+    {
+        if (sequence.empty()) {
+            return true;
+        }
+
+        if (bytes.size() < sequence.size()) {
+            return false;
+        }
+
+        for (std::size_t offset = 0; offset <= bytes.size() - sequence.size(); ++offset) {
+            bool matched = true;
+            for (std::size_t sequence_offset = 0; sequence_offset < sequence.size(); ++sequence_offset) {
+                if (bytes[offset + sequence_offset] != sequence[sequence_offset]) {
+                    matched = false;
+                    break;
+                }
+            }
+
+            if (matched) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     bool append_one_record_then_read_it()
     {
         const auto path = test_path("wal_facade_one_record.wal");
@@ -154,7 +183,9 @@ namespace
 
         wal::Wal wal_log{wal_config(path)};
         const wal::WalBatchAppendResult append_result = wal_log.append_batch(messages);
-        if (!append_result.ok() || append_result.messages_committed != messages.size()) {
+        if (!append_result.ok()
+            || append_result.messages_appended != messages.size()
+            || append_result.messages_committed != messages.size()) {
             std::filesystem::remove(path);
             return false;
         }
@@ -181,7 +212,55 @@ namespace
         return true;
     }
 
-    bool read_does_not_return_uncommitted_or_incomplete_tail()
+    bool append_batch_writes_one_physical_record_per_message()
+    {
+        const auto path = test_path("wal_facade_batch_physical_records.wal");
+        std::filesystem::remove(path);
+
+        const std::vector<std::vector<std::byte>> expected_payloads{
+            payload({1}),
+            payload({2, 3}),
+            payload({4, 5, 6})
+        };
+        const std::array messages{
+            message_view(expected_payloads[0]),
+            message_view(expected_payloads[1]),
+            message_view(expected_payloads[2])
+        };
+
+        {
+            wal::Wal wal_log{wal_config(path)};
+            const wal::WalBatchAppendResult append_result = wal_log.append_batch(messages);
+            if (!append_result.ok()
+                || append_result.first_sequence != first_sequence
+                || append_result.last_sequence != first_sequence + messages.size() - 1
+                || append_result.messages_committed != messages.size()) {
+                std::filesystem::remove(path);
+                return false;
+            }
+        }
+
+        wal::WalSegmentReader physical_reader{path};
+        wal::WalRecordView physical_record;
+        for (std::size_t index = 0; index < expected_payloads.size(); ++index) {
+            const wal::WalReadResult read_result = physical_reader.read_next(physical_record);
+            if (!read_result.ok()
+                || physical_record.header.sequence != first_sequence + index
+                || physical_record.header.record_type != test_record_type
+                || !std::ranges::equal(physical_record.payload, expected_payloads[index])) {
+                std::filesystem::remove(path);
+                return false;
+            }
+        }
+
+        const wal::WalReadResult end_read = physical_reader.read_next(physical_record);
+        const bool passed = end_read.status == wal::WalReadStatus::EndOfLog;
+
+        std::filesystem::remove(path);
+        return passed;
+    }
+
+    bool truncated_tail_is_not_readable()
     {
         const auto path = test_path("wal_facade_incomplete_tail.wal");
         std::filesystem::remove(path);
@@ -214,9 +293,9 @@ namespace
         return passed;
     }
 
-    bool batch_visibility_is_atomic()
+    bool truncated_batch_tail_leaves_only_valid_physical_prefix()
     {
-        const auto path = test_path("wal_facade_atomic_batch.wal");
+        const auto path = test_path("wal_facade_valid_prefix_after_batch_tail.wal");
         std::filesystem::remove(path);
 
         const std::vector<std::byte> first_payload = payload({21});
@@ -235,18 +314,20 @@ namespace
             }
         }
 
-        if (!truncate_file_tail(path, 4)) {
+        if (!truncate_file_tail(path, 16)) {
             std::filesystem::remove(path);
             return false;
         }
 
         wal::Wal recovered_wal{wal_config(path)};
         wal::WalCursor cursor = recovered_wal.cursor_from_beginning();
-        wal::WalRecord record;
-        const wal::WalReadResult read_result = recovered_wal.read_next(cursor, record);
+        std::array<wal::WalRecord, 3> records;
+        const wal::WalBatchReadResult read_result = recovered_wal.read_batch(cursor, records);
 
         std::filesystem::remove(path);
-        return read_result.status == wal::WalReadStatus::EndOfLog;
+        return read_result.records_read == 2
+            && same_payload(records[0].payload, first_payload)
+            && same_payload(records[1].payload, second_payload);
     }
 
     bool append_after_recovery_continues_sequence()
@@ -306,7 +387,7 @@ namespace
 
         const bool passed = append_result.status == wal::WalAppendStatus::Rejected
             && append_result.error == wal::WalError::InvalidPayloadLength
-            && wal_log.get_message_state(first_sequence) == wal::WalMessageState::Failed;
+            && wal_log.get_message_state(first_sequence) == wal::WalMessageState::Unknown;
 
         std::filesystem::remove(path);
         return passed;
@@ -339,7 +420,7 @@ namespace
         const wal::WalReadResult read_result = corrupted_wal.read_next(cursor, record);
 
         std::filesystem::remove(path);
-        return read_result.status == wal::WalReadStatus::Failed
+        return read_result.status == wal::WalReadStatus::Corrupted
             && read_result.error == wal::WalError::CorruptedMiddleRecord;
     }
 
@@ -376,6 +457,72 @@ namespace
         std::filesystem::remove(path);
         return true;
     }
+
+    bool read_batch_empty_buffer_behavior_is_defined()
+    {
+        const auto path = test_path("wal_facade_empty_batch_read.wal");
+        std::filesystem::remove(path);
+
+        wal::Wal wal_log{wal_config(path)};
+        wal::WalCursor cursor = wal_log.cursor_from_beginning();
+        const std::span<wal::WalRecord> empty_records;
+        const wal::WalBatchReadResult read_result = wal_log.read_batch(cursor, empty_records);
+
+        const bool passed = read_result.status == wal::WalReadStatus::InvalidArgument
+            && read_result.records_read == 0
+            && cursor.next_sequence == first_sequence;
+
+        std::filesystem::remove(path);
+        return passed;
+    }
+
+    bool no_batch_envelope_left()
+    {
+        const auto path = test_path("wal_facade_no_batch_envelope.wal");
+        std::filesystem::remove(path);
+
+        const std::vector<std::byte> first_payload = payload({1});
+        const std::vector<std::byte> second_payload = payload({2});
+        const std::array messages{
+            message_view(first_payload),
+            message_view(second_payload)
+        };
+
+        {
+            wal::Wal wal_log{wal_config(path)};
+            if (!wal_log.append_batch(messages).ok()) {
+                std::filesystem::remove(path);
+                return false;
+            }
+        }
+
+        std::ifstream input{path, std::ios::binary};
+        std::vector<std::byte> file_bytes;
+        for (std::istreambuf_iterator<char> byte_position{input}, end_position{};
+             byte_position != end_position;
+             ++byte_position) {
+            file_bytes.push_back(static_cast<std::byte>(*byte_position));
+        }
+
+        constexpr std::array old_batch_record_magic{
+            std::byte{0x42},
+            std::byte{0x4C},
+            std::byte{0x42},
+            std::byte{0x57}
+        };
+        constexpr std::array old_batch_payload_magic{
+            std::byte{0x50},
+            std::byte{0x4C},
+            std::byte{0x42},
+            std::byte{0x57}
+        };
+
+        const bool passed = !contains_byte_sequence(file_bytes, old_batch_record_magic)
+            && !contains_byte_sequence(file_bytes, old_batch_payload_magic);
+
+        std::filesystem::remove(path);
+        return passed;
+    }
 }
 
 int main()
@@ -386,23 +533,32 @@ int main()
     if (!append_batch_then_read_all()) {
         return 2;
     }
-    if (!read_does_not_return_uncommitted_or_incomplete_tail()) {
+    if (!append_batch_writes_one_physical_record_per_message()) {
         return 3;
     }
-    if (!batch_visibility_is_atomic()) {
+    if (!truncated_tail_is_not_readable()) {
         return 4;
     }
-    if (!append_after_recovery_continues_sequence()) {
+    if (!truncated_batch_tail_leaves_only_valid_physical_prefix()) {
         return 5;
     }
-    if (!payload_too_large_is_rejected()) {
+    if (!append_after_recovery_continues_sequence()) {
         return 6;
     }
-    if (!corrupted_middle_is_detected()) {
+    if (!payload_too_large_is_rejected()) {
         return 7;
     }
-    if (!read_batch_respects_buffer_size()) {
+    if (!corrupted_middle_is_detected()) {
         return 8;
+    }
+    if (!read_batch_respects_buffer_size()) {
+        return 9;
+    }
+    if (!read_batch_empty_buffer_behavior_is_defined()) {
+        return 10;
+    }
+    if (!no_batch_envelope_left()) {
+        return 11;
     }
 
     return 0;

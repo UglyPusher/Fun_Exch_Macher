@@ -2,7 +2,7 @@
 
 /**
  * @file wal_result.hpp
- * @brief Result types returned by WAL append, commit, and read operations.
+ * @brief Result types returned by WAL append, flush, and read operations.
  *
  * WAL APIs return explicit statuses so callers can distinguish rejected input,
  * physical failures, end of log, and successful operations.
@@ -34,22 +34,22 @@ namespace wal
     };
 
     /**
-     * @brief Status of publishing appended records.
+     * @brief Status of flushing appended bytes to the operating system.
      */
-    enum class WalCommitStatus
+    enum class WalFlushStatus
     {
-        Committed,
+        Flushed,
         Failed
     };
 
     /**
-     * @brief Result of committing pending WAL records.
+     * @brief Result of flushing pending WAL bytes.
      */
-    struct WalCommitResult
+    struct WalFlushResult
     {
-        WalCommitStatus status = WalCommitStatus::Failed;
+        WalFlushStatus status = WalFlushStatus::Failed;
         WalError error = WalError::None;
-        WalPosition committed_up_to {};
+        WalPosition flushed_up_to {};
     };
 
     /**
@@ -59,6 +59,8 @@ namespace wal
     {
         RecordRead,
         EndOfLog,
+        InvalidArgument,
+        Corrupted,
         Failed
     };
 

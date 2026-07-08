@@ -1,6 +1,6 @@
 /**
  * @file wal_segment_writer.cpp
- * @brief Implements append, reopen, and commit handling for one WAL segment.
+ * @brief Implements append, reopen, and flush handling for one WAL segment.
  */
 
 #include "wal/wal_segment_writer.hpp"
@@ -74,26 +74,25 @@ namespace wal
         return write_record(record_type, payload);
     }
 
-    WalCommitResult WalSegmentWriter::commit()
+    WalFlushResult WalSegmentWriter::flush_pending_writes()
     {
         if (writer_error_ != WalError::None) {
-            return {.status = WalCommitStatus::Failed, .error = writer_error_, .committed_up_to = last_position_};
+            return {.status = WalFlushStatus::Failed, .error = writer_error_, .flushed_up_to = last_position_};
         }
 
         file_.flush();
 
         if (!file_) {
             fail_writer(WalError::CannotFlushFile);
-            return {.status = WalCommitStatus::Failed, .error = WalError::CannotFlushFile, .committed_up_to = last_position_};
+            return {.status = WalFlushStatus::Failed, .error = WalError::CannotFlushFile, .flushed_up_to = last_position_};
         }
 
-        for (const auto& position : pending_positions_) {
-            committed_positions_.push(position);
-            last_committed_position_ = position;
-        }
+        const WalPosition flushed_up_to = pending_positions_.empty()
+            ? last_position_
+            : pending_positions_.back();
         pending_positions_.clear();
 
-        return {.status = WalCommitStatus::Committed, .error = WalError::None, .committed_up_to = last_committed_position_};
+        return {.status = WalFlushStatus::Flushed, .error = WalError::None, .flushed_up_to = flushed_up_to};
     }
 
     WalPosition WalSegmentWriter::last_position() const noexcept
@@ -101,35 +100,9 @@ namespace wal
         return last_position_;
     }
 
-    WalPosition WalSegmentWriter::last_committed_position() const noexcept
-    {
-        return last_committed_position_;
-    }
-
-    bool WalSegmentWriter::has_committed_position() const noexcept
-    {
-        return !committed_positions_.empty();
-    }
-
     std::size_t WalSegmentWriter::pending_count() const noexcept
     {
         return pending_positions_.size();
-    }
-
-    std::size_t WalSegmentWriter::committed_queue_size() const noexcept
-    {
-        return committed_positions_.size();
-    }
-
-    bool WalSegmentWriter::pop_committed_position(WalPosition& out)
-    {
-        if (committed_positions_.empty()) {
-            return false;
-        }
-
-        out = committed_positions_.front();
-        committed_positions_.pop();
-        return true;
     }
 
     WalRawAppendResult WalSegmentWriter::write_record(
@@ -213,7 +186,6 @@ namespace wal
         }
 
         last_position_ = scan_result.last_valid_position;
-        last_committed_position_ = last_position_;
         next_sequence_ = last_position_.is_valid()
             ? last_position_.sequence + 1
             : segment_header.first_sequence;

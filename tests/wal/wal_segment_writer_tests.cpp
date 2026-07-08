@@ -49,42 +49,29 @@ int main()
             return 2;
         }
 
-        if (writer.pending_count() != 2 || writer.committed_queue_size() != 0 || writer.has_committed_position()) {
+        if (writer.pending_count() != 2) {
             return 3;
         }
 
-        const auto commit_result = writer.commit();
-        if (commit_result.status != wal::WalCommitStatus::Committed || commit_result.committed_up_to.sequence != 11) {
+        const auto flush_result = writer.flush_pending_writes();
+        if (flush_result.status != wal::WalFlushStatus::Flushed || flush_result.flushed_up_to.sequence != 11) {
             return 4;
         }
 
-        wal::WalPosition committed;
-        if (writer.pending_count() != 0 || writer.committed_queue_size() != 2) {
+        if (writer.pending_count() != 0) {
             return 5;
-        }
-
-        if (!writer.pop_committed_position(committed) || committed.sequence != 10) {
-            return 6;
-        }
-
-        if (!writer.pop_committed_position(committed) || committed.sequence != 11) {
-            return 7;
-        }
-
-        if (writer.pop_committed_position(committed)) {
-            return 8;
         }
     }
 
     if (!wal::WalFile::exists(path) || wal::WalFile::size(path) <= sizeof(wal::WalSegmentHeader)) {
-        return 9;
+        return 6;
     }
 
     {
         wal::WalSegmentWriter reopened{path, 7, 3, 10};
         const auto result = reopened.append(200, payload);
         if (result.status != wal::WalRawAppendStatus::Appended || result.position.sequence != 12) {
-            return 10;
+            return 7;
         }
     }
 
@@ -93,7 +80,7 @@ int main()
         wal::WalSegmentWriter recovered{path, 7, 3, 10};
         const auto result = recovered.append(200, payload);
         if (result.status != wal::WalRawAppendStatus::Appended || result.position.sequence != 13) {
-            return 11;
+            return 8;
         }
     }
 
@@ -103,11 +90,11 @@ int main()
         for (int expected = 10; expected <= 13; ++expected) {
             const auto result = reader.read_next(record);
             if (result.status != wal::WalReadStatus::RecordRead || record.header.sequence != static_cast<wal::SequenceNumber>(expected)) {
-                return 12;
+                return 9;
             }
         }
         if (reader.read_next(record).status != wal::WalReadStatus::EndOfLog) {
-            return 13;
+            return 10;
         }
     }
 
@@ -116,14 +103,14 @@ int main()
     {
         wal::WalSegmentWriter writer{corrupted_path, 1, 1, 1};
         writer.append(200, payload);
-        writer.commit();
+        writer.flush_pending_writes();
     }
     overwrite_payload_byte(corrupted_path);
     {
         wal::WalSegmentWriter writer{corrupted_path, 1, 1, 1};
         const auto result = writer.append(200, payload);
         if (result.status != wal::WalRawAppendStatus::Failed || result.error != wal::WalError::CorruptedMiddleRecord) {
-            return 14;
+            return 11;
         }
     }
 
@@ -132,13 +119,13 @@ int main()
     {
         wal::WalSegmentWriter writer{wrong_stream_path, 1, 1, 1};
         writer.append(200, payload);
-        writer.commit();
+        writer.flush_pending_writes();
     }
     {
         wal::WalSegmentWriter writer{wrong_stream_path, 2, 1, 1};
         const auto result = writer.append(200, payload);
         if (result.status != wal::WalRawAppendStatus::Failed || result.error != wal::WalError::InvalidSegmentHeader) {
-            return 15;
+            return 12;
         }
     }
 

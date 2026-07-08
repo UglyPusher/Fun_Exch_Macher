@@ -22,7 +22,7 @@ namespace
         wal::WalSegmentWriter writer{path, 42, 9, 1};
         writer.append(200, first_payload);
         writer.append(300, second_payload);
-        writer.commit();
+        writer.flush_pending_writes();
     }
 
     void overwrite_byte(const std::filesystem::path& path, std::uint64_t offset, std::byte value)

@@ -32,9 +32,9 @@ namespace wal
             std::span<const std::byte> payload) = 0;
 
         /**
-         * @brief Publishes or flushes appended records according to the writer policy.
+         * @brief Flushes appended bytes to the operating system.
          */
-        virtual WalCommitResult commit() = 0;
+        virtual WalFlushResult flush_pending_writes() = 0;
 
         /**
          * @brief Returns the last appended WAL position.

@@ -68,8 +68,8 @@ Implemented in this prototype:
 - writer reopen handling for existing segments;
 - truncation of incomplete trailing records on writer reopen;
 - refusal to append after middle corruption;
-- fixed commit path: write, flush, fsync, publish committed visibility;
-- batch visibility through one physical batch envelope;
+- fixed commit path: write physical records, flush, fsync, publish committed visibility;
+- batch append as one physical record per logical message with one flush/fsync;
 - tests for corruption, recovery, sequencing, and typed boundaries.
 - app-level command/event WAL integration with the current matcher pipeline.
 

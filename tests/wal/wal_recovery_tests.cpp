@@ -19,7 +19,7 @@ namespace
         wal::WalSegmentWriter writer{path, 1, 1, 1};
         const std::array payload{std::byte{1}, std::byte{2}, std::byte{3}};
         writer.append(200, payload);
-        writer.commit();
+        writer.flush_pending_writes();
     }
 
     void overwrite_byte(const std::filesystem::path& path, std::uint64_t offset, std::byte value)

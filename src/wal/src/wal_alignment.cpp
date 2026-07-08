@@ -5,6 +5,8 @@
 
 #include "wal/wal_alignment.hpp"
 
+#include <limits>
+
 namespace wal
 {
     std::uint32_t align_up(std::uint32_t value, std::uint32_t alignment) noexcept
@@ -14,7 +16,16 @@ namespace wal
         }
 
         const auto remainder = value % alignment;
-        return remainder == 0 ? value : value + (alignment - remainder);
+        if (remainder == 0) {
+            return value;
+        }
+
+        const std::uint32_t padding = alignment - remainder;
+        if (value > std::numeric_limits<std::uint32_t>::max() - padding) {
+            return value;
+        }
+
+        return value + padding;
     }
 
     std::uint32_t padding_for(std::uint32_t value, std::uint32_t alignment) noexcept

@@ -87,7 +87,8 @@ namespace wal
     {
         Committed,
         Rejected,
-        Failed
+        Failed,
+        Corrupted
     };
 
     /**
@@ -114,6 +115,7 @@ namespace wal
         WalError error = WalError::None;
         WalSeq first_sequence = 0;
         WalSeq last_sequence = 0;
+        std::size_t messages_appended = 0;
         std::size_t messages_committed = 0;
 
         /**
